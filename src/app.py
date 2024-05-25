@@ -1,7 +1,12 @@
-from dash import Dash, html, dash_table, dcc, callback, Output, Input, ctx, State
+from dash import Dash, html, dash_table, dcc, callback, Output, Input, ctx, State, no_update
 import dash_bootstrap_components as dbc
+from dash.exceptions import PreventUpdate
+
+from sklearn.utils.validation import check_is_fitted
+from sklearn.exceptions import NotFittedError
 
 import json
+import random
 import math
 import heapq
 import pandas as pd
@@ -9,6 +14,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from copy import deepcopy
+from datetime import datetime
 
 
 from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
@@ -20,12 +26,18 @@ from modAL.models import ActiveLearner, CommitteeRegressor
 from modAL.disagreement import max_std_sampling
 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
+df = df[df['release_date'] >= 1999]
 
 scaler = MinMaxScaler()
 norm_date = scaler.fit_transform(np.array(df['release_date']).reshape(-1, 1))
 df['release_date'] = norm_date
+df['preference'] = 0
 
 # all features for the dimensionality reduction + model (temporary)
+NUM_FEATURES = ['release_date', 'loudness', 'acousticness', 'instrumentalness', 'valence', 'blues', 'country', 'hip hop', 
+                'jazz', 'pop', 'reggae', 'rock', 'feelings', 'music', 'night/time', 'obscene', 'romantic', 'sadness', 
+                'violence', 'world/life']
+
 TEST_FEATURES = ['loudness', 'acousticness', 'instrumentalness', 'valence', 'blues', 'country', 'hip hop', 
                 'jazz', 'pop', 'reggae', 'rock', 'feelings', 'music', 'night/time', 'obscene', 'romantic', 'sadness', 
                 'violence', 'world/life']
@@ -36,10 +48,14 @@ ALL_FEATURES = ['loudness', 'acousticness', 'instrumentalness',
                 'sadness', 'violence', 'world/life', 'dance', 'ener', 'x_coor',
                 'y_coor', 'artist', 'track', 'preference']
 
+COMMON_FEATURES = ['release_date', 'loudness', 'acousticness', 'instrumentalness', 'valence']
+
 CHANGE_FEATURES = ['release_date', 'preference']
 
+df = df.drop_duplicates(subset=COMMON_FEATURES).reset_index(drop=True)
+
 X = df[['release_date', 'genre', 'loudness', 'acousticness', 'instrumentalness', 'valence', 'topic']]
-Y = df[['danceability', 'energy']]
+Y = df[['danceability', 'energy', 'preference']]
 
 # one hot encode the categorical columns
 def one_hot_encode(X, column):
@@ -70,10 +86,11 @@ train = pd.concat([X, Y], axis=1)
 X_pool = deepcopy(train[['release_date'] + TEST_FEATURES].to_numpy())
 y_pool1 = deepcopy(train['danceability'].to_numpy())
 y_pool2 = deepcopy(train['energy'].to_numpy())
-y_pool = [y_pool1, y_pool2]
+y_pool3 = deepcopy(train['preference'].to_numpy())
+y_pool = [y_pool1, y_pool2, y_pool3]
 
 # initializing Committee members
-n_comm = 2
+n_comm = 3
 comm_list = list()
 query_idx = []
 labeled_idx = []
@@ -83,22 +100,9 @@ for comm_idx in range(n_comm):
     learner_list = list()
     # add members to each committee
     for member_idx in range(n_members):
-        # initial training data
-        n_initial = 5
-        train_idx = np.random.choice(range(X_pool.shape[0]), size=n_initial, replace=False)
-        X_train = X_pool[train_idx]
-        y_train = y_pool[comm_idx][train_idx]
-
-        # creating a reduced copy of the data with the known instances removed
-        X_pool = np.delete(X_pool, train_idx, axis=0)
-        for cidx in range(n_comm):
-            y_pool[cidx] = np.delete(y_pool[cidx], train_idx, axis=0)
-
-
         # initializing learner
         learner = ActiveLearner(
             estimator=Ridge(alpha=1.0),
-            X_training=X_train, y_training=y_train
         )
         learner_list.append(learner)
 
@@ -109,18 +113,12 @@ for comm_idx in range(n_comm):
     )    
     comm_list.append(committee)
 
-# return the Mean Squared Error (MSE)
-def get_mse(committee, X, Y_true):
-    Y_pred = committee.predict(X)
-    return mean_squared_error(Y_pred, Y_true) 
-
 # create a plot for the MSE over time
 performance_history = [[0] for i in range(n_comm)]
 for comm_idx in range(n_comm):
-    _, stds = comm_list[comm_idx].predict(X_pool, return_std=True)
-    performance_history[comm_idx] = [sum(stds)]
+    performance_history[comm_idx] = [None]
 
-df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy'])
+df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy', 'preference'])
 fig2 = px.line(df_perf)
 
 def var_to_string(artist, track, release_date):
@@ -197,10 +195,10 @@ def plot_star_glyphs_from_dataframe(data):
     for i, row in data.iterrows():
         x = row['x_coor']
         y = row['y_coor']
-        values1 = row['loudness']
-        values2 = row['acousticness']
-        values3 = row['instrumentalness']
-        values = [values1, values2, values3]
+        values = [0 for i in range(n_comm)]
+
+        for comm_idx in range(n_comm):
+            values[comm_idx] = comm_list[comm_idx].predict([row[NUM_FEATURES].tolist()])
 
         num_variables = len(values)
         angles = np.linspace(0, 2*np.pi, num_variables, endpoint=False)
@@ -241,6 +239,21 @@ def plot_star_glyphs_from_dataframe(data):
             )
         )
     return fig
+
+def is_model_fitted(model):
+    try:
+        # Check if the model is fitted by checking one of the fitted attributes
+        check_is_fitted(model)
+        return True
+    except NotFittedError:
+        return False
+    
+def are_all_learners_fitted(committee):
+    for learner in committee.learner_list:
+        if not is_model_fitted(learner.estimator):
+            return False
+    return True
+
 
 # create scatterplot
 fig = px.scatter(data, x='x_coor', y='y_coor', 
@@ -314,24 +327,19 @@ app.layout = html.Div([
     dcc.Store(id='labeled-store', data=labeled_idx),    
     dcc.Store(id='pcp-store'),
     dcc.Store(id='reset-bool', data=False),
+    dcc.Store(id='test-data', data=0),
 ], style={"display": "flex"})
 
-# TODO: fix lasso/box select
-# - Glyph: use the correct features
-# - clickData does not work twice on the same item (for deselecting)
-# init commmittees without using labels
-# - Make sure no y labels are used (except user given)
-# - deselect selection box
-# - when an item is deselected, it reappears when pressing the train button, since the 'clickdata' is still of this item somehow (probably due to children)
 # callback to update DataTable and visualization based on selections
 @app.callback(
     Output('main-vis', 'figure'),
-    Output('data-store', 'data'),
-    Input('main-vis', 'relayoutData'),
     Input('query-store', 'data'),
     Input('labeled-store', 'data'),
+    State('checklist-output', 'children'),
 )
-def update_data(relayout_data, query_idx, labeled_idx):
+def update_plot(query_idx, labeled_idx, current_children):
+    print("ENTERED UPDATE PLOT")
+    print("CURRENT CHILDREN BEFORE IN PLOT", current_children)
     x_data = data[~data.index.isin(labeled_idx)]['x_coor']
     y_data = data[~data.index.isin(labeled_idx)]['y_coor']
     artist_data = data[~data.index.isin(labeled_idx)]['artist']
@@ -355,7 +363,11 @@ def update_data(relayout_data, query_idx, labeled_idx):
     # Creating the figure
     fig = go.Figure(data=[scatter_trace], layout=layout)
 
-    # TODO: check consequences of [:-5 or None]
+    # TODO: 
+    # - clickData does not work twice on the same item (for deselecting)
+    # - remove item from pcp when unchecked
+    # - change PCP to parallel categories
+    # - other functionality for when there is no model fitted, perhaps randomly sample
     if labeled_idx[:-0 or None]:
         label_idx = labeled_idx[:-0 or None]
         x_data = data.iloc[label_idx]['x_coor']
@@ -382,118 +394,115 @@ def update_data(relayout_data, query_idx, labeled_idx):
             fig.add_trace(trace)
 
     fig.update_layout(clickmode='event+select', margin=dict(l=20, r=20, t=20, b=20))
+    print("CURRENT CHILDREN AFTER IN PLOT", current_children)
+    return fig
 
-    # zoom in correctly
-    if relayout_data is not None:
-        if 'xaxis.range[0]' in relayout_data and 'yaxis.range[0]' in relayout_data:
-            fig.update_layout(xaxis=dict(range=[relayout_data['xaxis.range[0]'], relayout_data['xaxis.range[1]']]),
-                            yaxis=dict(range=[relayout_data['yaxis.range[0]'], relayout_data['yaxis.range[1]']]))
-        elif 'xaxis.range[0]' in relayout_data:
-            fig.update_layout(xaxis=dict(range=[relayout_data['xaxis.range[0]'], relayout_data['xaxis.range[1]']]))
-        elif 'yaxis.range[0]' in relayout_data:
-            fig.update_layout(yaxis=dict(range=[relayout_data['yaxis.range[0]'], relayout_data['yaxis.range[1]']]))
-        elif 'dragmode' in relayout_data:
-            fig.update_layout(dragmode=relayout_data['dragmode'])
 
-    return fig, json.dumps(data.to_dict("index"))
-
+# TODO:
+# - correctly work on button click (add red dots, remove from checkbox list)
 @callback(
-    Output('acc-vis', 'figure'),
-    Output('x_pool-store', 'data'),
-    Output('y_pool-store', 'data'),
-    Output('query-store', 'data'), 
-    Output('labeled-store', 'data'),
-    Output('reset-bool', 'data', allow_duplicate=True),
-    Input('train-btn', 'n_clicks'),
-    Input('x_pool-store', 'data'),
-    Input('y_pool-store', 'data'),
-    Input('labeled-store', 'data'),
-    State('pcp-store', 'data'),
-    State('dance-slider', 'value'),
-    State('energy-slider', 'value'),
-    State('pref-slider', 'value'),
-    prevent_initial_call='initial_duplicate'
-)
-def displayClick(btn1, X_pool, y_pool, labeled_idx, df, danceability, energy, preference):
-    if isinstance(X_pool, list):
-        X_pool = np.array(X_pool)
-
-    query_idx = []
-    reset_bool = False
-    df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy'])
-    fig2 = px.line(df_perf)
-    fig2.update_layout(
-        title="Model progress",
-        xaxis_title="Training iteration",
-        yaxis_title="Total standard deviation",
-        legend_title="Features",
-    )
-
-    fig2.update_layout(
-        height=300,  # specify the height
-        width=350    # specify the width
-    )
-
-    y_pool_test = [danceability, energy]
-
-    if not df:
-        return fig2, X_pool, y_pool, query_idx, labeled_idx, reset_bool
-
-    # if the button is clicked, train the model
-    if "train-btn" == ctx.triggered_id:
-        artist = pd.DataFrame(df)['artist'].tolist()
-        track = pd.DataFrame(df)['track'].tolist()
-        indices = data[(data['artist'].isin(artist)) & (data['track'].isin(track))].index.tolist()
-        # query by committee
-        std_list = np.zeros(len(X_pool))
-
-        for comm_idx in range(n_comm):
-            _, stds = comm_list[comm_idx].predict(X_pool, return_std=True)
-            std_list = [x + y for x, y in zip(std_list, stds)]
-            performance_history[comm_idx] = np.append(performance_history[comm_idx], sum(stds))
-            
-        query_idx = [std_list.index(i) for i in heapq.nlargest(5, std_list)]
-
-        for comm_idx in range(n_comm):
-            comm_list[comm_idx].teach(X_pool[indices], np.array([y_pool_test[comm_idx]] * X_pool[indices].shape[0]))
-        
-        # show the MSE performance over time
-        df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy'])
-        fig2 = px.line(df_perf)
-        fig2.update_layout(
-            title="Model progress",
-            xaxis_title="Training iteration",
-            yaxis_title="Total standard deviation",
-            legend_title="Features",
-        )
-
-        fig2.update_layout(
-            height=300,  # specify the height
-            width=350    # specify the width
-        )
-
-        labeled_idx = labeled_idx + indices
-
-        reset_bool = True
-
-    return fig2, X_pool, y_pool, query_idx, labeled_idx, reset_bool
-
-@app.callback(
-    Output('checklist-output', 'children'),
-    Output('pcp-vis', 'figure'),
-    Output('pcp-store', 'data'),
-    Output('reset-bool', 'data', allow_duplicate=True), 
-    Input('main-vis', 'clickData'),
-    Input('reset-bool', 'data'),
-    State('pcp-store', 'data'),    
-    State('query-store', 'data'),
-    State('labeled-store', 'data'),
+    Output('checklist-output', 'children', allow_duplicate=True),
+    Output('pcp-vis', 'figure', allow_duplicate=True),
+    Input('main-vis', 'selectedData'),
     State('checklist-output', 'children'),
     prevent_initial_call='initial_duplicate'
 )
-def update_output_checklist(click_data, reset_bool, pcp_df, query_idx, labeled_idx, current_children):
-    MT = np.zeros(len(data.columns))
-    df_pcp = pd.DataFrame([MT], columns=data.columns)
+def lasso_select(selected_data, current_children):
+    print("ENTERED LASSO SELECT")
+    print("CURRENT CHILDREN BEFORE IN LASSO", current_children)
+    if selected_data is None:
+        print("CURRENT CHILDREN AFTER IN LASSO 1", current_children)
+        return no_update
+    
+    points = selected_data.get('points', [])
+    if not points:
+        print("CURRENT CHILDREN AFTER IN LASSO 2", current_children)
+        return no_update
+    
+    lasso = selected_data.get('lassoPoints', [])
+    if not lasso:
+        print("CURRENT CHILDREN AFTER IN LASSO 3", current_children)
+        return no_update
+    
+    model_fitted = True
+    for idx, committee in enumerate(comm_list):
+        if not are_all_learners_fitted(committee):
+            model_fitted = False
+
+    df_al = pd.DataFrame(columns=data.columns)
+    filtered_points = [point for point in selected_data['points'] if point['curveNumber'] == 0]
+    for i in filtered_points:
+        artist, track, rl = string_to_var(i['text'])
+        filtered_data = data[(data['artist'] == artist) & (data['track'] == track)].dropna(axis=1, how='all')
+        df_al_filtered = df_al.dropna(axis=1, how='all')
+        df_al = pd.concat([df_al_filtered, filtered_data], ignore_index=True)
+        # df_al = pd.concat([df_al, data[(data['artist'] == artist) & (data['track'] == track)]], ignore_index=True)
+
+    x_df = df_al[NUM_FEATURES].to_numpy()
+    std_list = np.zeros(len(x_df))
+
+    if model_fitted:
+        for comm_idx in range(n_comm):
+            _, stds = comm_list[comm_idx].predict(x_df, return_std=True)
+            std_list = [x + y for x, y in zip(std_list, stds)]
+
+        # Convert std_list to a numpy array for efficient indexing
+        std_array = np.array(std_list)
+
+        # Number of elements to find
+        n_largest = 5
+
+        # Handle case where std_list has fewer than n_largest elements
+        if len(std_array) <= n_largest:
+            sorted_largest_indices = np.argsort(-std_array)
+        else:
+            # Get the indices of the n_largest elements
+            largest_indices = np.argpartition(std_array, -n_largest)[-n_largest:]
+            # Sort these indices by their corresponding values in descending order
+            sorted_largest_indices = largest_indices[np.argsort(-std_array[largest_indices])]
+
+        # Convert numpy array to list if needed
+        query_idx = sorted_largest_indices.tolist()
+
+    if not model_fitted:
+        query_idx = np.random.randint(0, len(df_al), size=5)
+        query_idx = list(set(query_idx))
+
+    merged_df = data.merge(df_al.iloc[query_idx], on=COMMON_FEATURES, how='outer', indicator=True)
+
+    # Filter rows that are in both DataFrames
+    matching_rows = merged_df[merged_df['_merge'] == 'both']
+
+    # Drop the indicator column if not needed
+    matching_rows = matching_rows.drop(columns=['_merge'])
+    samples = matching_rows[['artist_y', 'track_y', 'release_date']]
+
+    if current_children is None:
+        current_children = []
+
+    df_pcp = pd.DataFrame(columns=data.columns)
+
+    for index, row in samples.iterrows():
+        artist = row['artist_y']
+        track = row['track_y']
+        rl = row['release_date']
+        
+        sample = var_to_string(artist, track, rl)
+        
+        new_item = dcc.Checklist(
+            id={'type': 'data-checklist', 'label': sample},
+            options=[{'label': format_string(sample), 'value': sample}],
+            value=[sample],
+            inline=True
+        )
+        current_children = current_children + [new_item]
+
+        # df_pcp = pd.concat([df_pcp, data[(data['artist'] == artist) & (data['track'] == track)]], ignore_index=True)
+        filtered_data = data[(data['artist'] == artist) & (data['track'] == track)].dropna(axis=1, how='all')
+        df_pcp_filtered = df_pcp.dropna(axis=1, how='all')
+        df_pcp = pd.concat([df_pcp_filtered, filtered_data], ignore_index=True)
+
+
     pcp = go.Figure(data=
         go.Parcoords(dimensions=[dict(range=[0, 1], label=feature, values=df_pcp[feature]) for feature in TEST_FEATURES])
     )
@@ -509,19 +518,182 @@ def update_output_checklist(click_data, reset_bool, pcp_df, query_idx, labeled_i
         labelangle=-20
     )
 
+    print("CURRENT CHILDREN AFTER IN LASSO 4", current_children)
+    return current_children, pcp
+
+@callback(
+    Output('acc-vis', 'figure'),
+    Output('x_pool-store', 'data'),
+    Output('y_pool-store', 'data'),
+    Output('query-store', 'data'), 
+    Output('reset-bool', 'data', allow_duplicate=True),
+    Input('train-btn', 'n_clicks'),
+    State('x_pool-store', 'data'),
+    State('y_pool-store', 'data'),
+    State('pcp-store', 'data'),
+    State('dance-slider', 'value'),
+    State('energy-slider', 'value'),
+    State('pref-slider', 'value'),
+    prevent_initial_call='initial_duplicate'
+)
+def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference):
+    print("ENTERED TRAIN MODEL")
+    if isinstance(X_pool, list):
+        X_pool = np.array(X_pool)
+
+    query_idx = []
+    reset_bool = False
+    df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy', 'preference'])
+    fig2 = px.line(df_perf)
+    fig2.update_layout(
+        title="Model progress",
+        xaxis_title="Training iteration",
+        yaxis_title="Total standard deviation",
+        legend_title="Features",
+    )
+
+    fig2.update_layout(
+        height=300,  # specify the height
+        width=350    # specify the width
+    )
+
+    y_pool_test = [danceability, energy, preference]
+
+    if not df:
+        return fig2, X_pool, y_pool, query_idx, reset_bool
+
+    # if the button is clicked, train the model
+    if "train-btn" == ctx.triggered_id:
+        artist = pd.DataFrame(df)['artist'].tolist()
+        track = pd.DataFrame(df)['track'].tolist()
+        indices = data[(data['artist'].isin(artist)) & (data['track'].isin(track))].index.tolist()
+        # query by committee
+        std_list = np.zeros(len(X_pool))
+
+        for comm_idx in range(n_comm):
+            comm_list[comm_idx].teach(X_pool[indices], np.array([y_pool_test[comm_idx]] * X_pool[indices].shape[0]))
+
+        for comm_idx in range(n_comm):
+            _, stds = comm_list[comm_idx].predict(X_pool, return_std=True)
+            std_list = [x + y for x, y in zip(std_list, stds)]
+            performance_history[comm_idx] = np.append(performance_history[comm_idx], sum(stds))
+            
+        # Convert std_list to a numpy array for efficient indexing
+        std_array = np.array(std_list)
+
+        # Number of elements to find
+        n_largest = 5
+
+        # Handle case where std_list has fewer than n_largest elements
+        if len(std_array) <= n_largest:
+            sorted_largest_indices = np.argsort(-std_array)
+        else:
+            # Get the indices of the n_largest elements
+            largest_indices = np.argpartition(std_array, -n_largest)[-n_largest:]
+            # Sort these indices by their corresponding values in descending order
+            sorted_largest_indices = largest_indices[np.argsort(-std_array[largest_indices])]
+
+        # Convert numpy array to list if needed
+        query_idx = sorted_largest_indices.tolist()
+        
+        # show the MSE performance over time
+        df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy', 'preference'])
+        fig2 = px.line(df_perf)
+        fig2.update_layout(
+            title="Model progress",
+            xaxis_title="Training iteration",
+            yaxis_title="Total standard deviation",
+            legend_title="Features",
+        )
+
+        fig2.update_layout(
+            height=300,  # specify the height
+            width=350    # specify the width
+        )
+
+        reset_bool = True
+
+    return fig2, X_pool, y_pool, query_idx, reset_bool
+
+@app.callback(
+    Output('checklist-output', 'children', allow_duplicate=True),
+    Output('pcp-vis', 'figure', allow_duplicate=True),
+    Output('pcp-store', 'data', allow_duplicate=True),
+    Output('reset-bool', 'data', allow_duplicate=True), 
+    Output('labeled-store', 'data', allow_duplicate=True),
+    Input('main-vis', 'clickData'),
+    Input('reset-bool', 'data'),
+    Input('labeled-store', 'data'),
+    State('pcp-store', 'data'),    
+    State('query-store', 'data'),
+    Input('checklist-output', 'children'),
+    prevent_initial_call='initial_duplicate'
+)
+def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, current_children):
+    print('ENTERED HANDLE LABELING')
+    print("CURRENT CHILDREN BEFORE IN HANDLE", current_children)
     if not click_data:
-        return current_children, pcp, pcp_df, reset_bool
+        MT = np.zeros(len(data.columns))
+        df_pcp = pd.DataFrame([MT], columns=data.columns)
+        pcp = go.Figure(data=
+            go.Parcoords(dimensions=[dict(range=[0, 1], label=feature, values=df_pcp[feature]) for feature in TEST_FEATURES])
+        )
+        pcp.update_layout(
+            height=300,  # specify the height
+            width=800    # specify the width
+        )
+        pcp.update_traces(
+            dimensions=[
+                {**d, **{"tickvals": np.linspace(0, 1, 5)}}
+                for d in pcp.to_dict()["data"][0]["dimensions"]
+            ],
+            labelangle=-20
+        )
+        print("CURRENT CHILDREN AFTER IN HANDLE 1", current_children)
+        return current_children, pcp, pcp_df, reset_bool, labeled_idx
     
     if reset_bool:
+        pcp_df = pd.DataFrame(pcp_df)
         reset_bool = False
-        return [], pcp, df_pcp.to_dict('records'), reset_bool
+
+        # if checkbox is checked, the item gets a 'value'
+        value = [item['props']['value'] for item in current_children]
+        
+        # remove all items that are checked from the dataframe
+        for i in value:
+            if i:
+                artist, track, rl = string_to_var(i[0])
+                pcp_df = pcp_df[(pcp_df.artist != artist) & (pcp_df.track != track)]
+
+                labeled_idx = labeled_idx + data[(data['artist'] == artist) & (data['track'] == track)].index.tolist()
+
+        # create a new figure for the unchecked data
+        pcp = go.Figure(data=
+            go.Parcoords(dimensions=[dict(range=[0, 1], label=feature, values=pcp_df[feature]) for feature in TEST_FEATURES])
+        )
+        pcp.update_layout(
+            height=300,  # specify the height
+            width=800    # specify the width
+        )
+        pcp.update_traces(
+            dimensions=[
+                {**d, **{"tickvals": np.linspace(0, 1, 5)}}
+                for d in pcp.to_dict()["data"][0]["dimensions"]
+            ],
+            labelangle=-20
+        )
+
+        # keep only the children that are not checked
+        new_children = [i for i in current_children if not i['props']['value']]
+        print("CURRENT CHILDREN AFTER IN HANDLE 2", current_children)
+        return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx
     
     artist, track, release_date, sample = None, None, None, None
     if click_data['points'][0]['curveNumber'] == 0:
         sample = click_data['points'][0]['text']
         artist, track, release_date = string_to_var(sample)
 
-    if click_data['points'][0]['curveNumber'] == 1:
+    elif click_data['points'][0]['curveNumber'] == 1:
         id = click_data['points'][0]['pointIndex']
         queried = labeled_idx[id]
         artist = data.iloc[queried]['artist']
@@ -529,7 +701,7 @@ def update_output_checklist(click_data, reset_bool, pcp_df, query_idx, labeled_i
         release_date = data.iloc[queried]['release_date']
         sample = var_to_string(artist, track, release_date)
 
-    if click_data['points'][0]['curveNumber'] > 1:
+    elif click_data['points'][0]['curveNumber'] > 1:
         id = (click_data['points'][0]['curveNumber'] - 3) // 2
         queried = query_idx[id]
         artist = data.iloc[queried]['artist']
@@ -557,7 +729,6 @@ def update_output_checklist(click_data, reset_bool, pcp_df, query_idx, labeled_i
         new_item = dcc.Checklist(
             id={'type': 'data-checklist', 'label': sample},
             options=[{'label': format_string(sample), 'value': sample}],
-            # options=[{'label': sample, 'value': sample}],
             value=[sample],
             inline=True
         )
@@ -588,7 +759,8 @@ def update_output_checklist(click_data, reset_bool, pcp_df, query_idx, labeled_i
         labelangle=-20
     )
 
-    return new_children, new_pcp, pcp_df.to_dict('records'), reset_bool
+    print("CURRENT CHILDREN AFTER IN HANDLE 3", current_children)
+    return new_children, new_pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx
 
 if __name__ == '__main__':
     app.run(debug=True)
