@@ -21,12 +21,7 @@ import base64
 from io import BytesIO
 
 # TODO:
-# - show pcp correctly upon lasso selection
-# - show current prediction for selected samples (fix red)
 # - remove item from pcp when unchecked (if needed)
-# - show selected scatters
-# - delete from labeling list
-# - hovering over AL guidance
 
 # load dataset, select only a subset 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
@@ -195,6 +190,7 @@ def var_to_string(artist, track, release_date):
     string = f"Artist: {artist}<br>Track: {track}<br>Release Date: {release_date}"    
     return string
 
+
 # create variables from processable string
 def string_to_var(string):
     # split the string into separate lines
@@ -232,84 +228,93 @@ def format_string(string):
         elif line.startswith("Track:"):
             track = line.split("Track: ")[1].strip()
 
+    preds = get_pred(artist, track)
+    for i in range(len(preds)):
+        preds[i] = round(preds[i], 2)
+
     # construct the formatted string
-    formatted_string = f"'{track}' by '{artist}'"
+    formatted_string = f"'{track}' by '{artist}'. Current prediction: {preds}"
     
     return formatted_string
 
+def get_pred(artist, track):
+    x = data[(data['artist'] == artist) & (data['track'] == track)][TRAIN_FEATURES]
+    
+    model_fitted = True
+    for idx, committee in enumerate(comm_list):
+        if not are_all_learners_fitted(committee):
+            model_fitted = False
+            
+    preds = []
+    if model_fitted:
+        for comm_idx in range(n_comm):
+            pred = comm_list[comm_idx].predict(x.to_numpy())
+            preds.append(pred[0])
+        return preds
+        
+    else:
+        return [0, 0, 0]
+
 # function to create the star glyphs
 def plot_star_glyphs_from_dataframe(data):
-    """
-    Plot non-overlapping star glyphs with filled enclosed areas and center points from a DataFrame.
+    # Create an initial scatter plot
+    fig = px.scatter(data, x='x_coor', y='y_coor')
 
-    Args:
-    - data (pandas.DataFrame): DataFrame containing the following columns:
-                                'x_coord': x coordinates for the center points of the star glyphs.
-                                'y_coord': y coordinates for the center points of the star glyphs.
-                                'glyph_values': List of lists containing values for each glyph.
-                                                Each inner list represents the values for a single glyph.
-                                'artist': Artist name for each glyph.
-                                'track_name': Track name for each glyph.
-
-    Returns:
-    - fig (plotly.graph_objs.Figure): Plotly figure containing the star glyphs.
-    """
-
-    fig = px.scatter(data, x='x_coor', y='y_coor', 
-                                hover_data={'x_coor':False, 
-                                            'y_coor':False,
-                                            'artist':True,
-                                            'track':True,
-                                            'release_date':True,
-                                            })
-
-    # add traces for each star glyph
+    # Add traces for each star glyph
     for i, row in data.iterrows():
         x = row['x_coor']
         y = row['y_coor']
-        values = [0 for i in range(n_comm)]
+        values = [0 for _ in range(n_comm)]
 
         for comm_idx in range(n_comm):
-            values[comm_idx] = comm_list[comm_idx].predict([row[TRAIN_FEATURES].tolist()])
+            values[comm_idx] = comm_list[comm_idx].predict([row[TRAIN_FEATURES].tolist()])[0]
 
         num_variables = len(values)
         angles = np.linspace(0, 2*np.pi, num_variables, endpoint=False)
 
-        # calculate coordinates for the arms
+        # Calculate coordinates for the arms
         x_arms = x + values * np.cos(angles)
         y_arms = y + values * np.sin(angles)
 
-        # close the shape
+        # Close the shape
         x_arms = np.append(x_arms, x_arms[0])
         y_arms = np.append(y_arms, y_arms[0])
 
-        # add filled area trace
+        # Create hover text
+        hover_text = f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
+
+        # Add filled area trace
         fig.add_trace(
             go.Scatter(
                 x=x_arms,
                 y=y_arms,
                 fill='toself',
-                fillcolor='rgba(0, 255, 0, 1)',  # red fill color with transparency
+                fillcolor='rgba(0, 255, 0, 1)',  # green fill color
                 line=dict(color='rgba(0, 255, 0, 0)'),  # hide line
                 showlegend=False,
+                hoverinfo='text',
+                text=hover_text
             )
         )
 
-        # calculate coordinates for the circle
+        # Calculate coordinates for the circle
         circle_angles = np.linspace(0, 2*np.pi, 100)
         circle_x = x + np.cos(circle_angles)
         circle_y = y + np.sin(circle_angles)
 
-        # add trace for the circle
+        # Add trace for the circle
         fig.add_trace(
             go.Scatter(
                 x=circle_x,
                 y=circle_y,
                 mode='lines',
-                line=dict(color='rgba(0, 255, 0, 1)'),  # black circle line with full opacity
+                line=dict(color='rgba(0, 255, 0, 1)'),  # green circle line
                 showlegend=False,
+                hoverinfo='text',
+                text=hover_text
             )
         )
+
     return fig
 
 # check if a model if fitted
@@ -376,6 +381,7 @@ app.layout = html.Div([
                 dcc.Slider(min=0, max=1, value=0.5, marks={0:'Very Bad', 0.25:'Bad', 0.5:'Neutral', 0.75:'Good', 1:'Very Good'}, tooltip={"placement": "bottom", "always_visible": True, 'template':'preference'}, id='pref-slider'),
                 html.Div(id='checklist-output'),
                 html.Button('Train the model!', id='train-btn', n_clicks=0), 
+                html.Button('Remove selected items', id='remove-btn', n_clicks=0),
             ]),
 
             # performance plot
@@ -485,19 +491,14 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data):
         for i, trace in enumerate(fig.data):
             if i == 0:
                 trace.selectedpoints = indices
-
     if indices_2:
         for i, trace in enumerate(fig.data):
             if i == 1:
                 trace.selectedpoints = indices_2
-    elif indices:
+    elif indices and not indices_2:
         for i, trace in enumerate(fig.data):
             if i == 1:
                 trace.selectedpoints = []
-    else:
-        for i, trace in enumerate(fig.data):
-            if i == 1:
-                trace.selectedpoints = indices_2
 
     return fig
 
@@ -608,6 +609,42 @@ def lasso_select(selected_data, current_children):
     pcp = create_pcp(df_pcp)
 
     return current_children, pcp
+
+
+@callback(
+    Output('checklist-output', 'children', allow_duplicate=True),
+    Output('pcp-vis', 'figure', allow_duplicate=True),
+    Output('pcp-store', 'data', allow_duplicate=True),
+    Input('remove-btn', 'n_clicks'),
+    State('checklist-output', 'children'),
+    State('pcp-store', 'data'), 
+    prevent_initial_call='initial_duplicate'
+)
+def remove_items(btn2, current_children, pcp_df):
+    # if "remove-btn" == ctx.triggered_id:
+    #     current_children = []
+    #     MT = np.zeros(len(data.columns))
+    #     df_pcp = pd.DataFrame([MT], columns=data.columns)
+    #     pcp = create_pcp(df_pcp)
+    #     return current_children, pcp, df_pcp.to_dict('records')
+
+    if "remove-btn" == ctx.triggered_id:
+        pcp_df = pd.DataFrame(pcp_df)
+        value = [item['props']['value'] for item in current_children]
+        
+        # remove all items that are checked from the dataframe
+        for i in value:
+            if i:
+                artist, track, rl = string_to_var(i[0])
+                pcp_df = pcp_df[(pcp_df.artist != artist) & (pcp_df.track != track)]
+
+        pcp = create_pcp(pcp_df)
+
+        # keep only the children that are not checked
+        current_children = [i for i in current_children if not i['props']['value']]
+        return current_children, pcp, pcp_df.to_dict('records')
+    
+    return no_update
 
 # callback for the button, starts new model iteration
 @callback(
@@ -749,6 +786,7 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
 
         # keep only the children that are not checked
         new_children = [i for i in current_children if not i['props']['value']]
+        # return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
     
     # if no data is clicked, return a mock-up pcp
     if not click_data:
