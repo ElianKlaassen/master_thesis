@@ -1,14 +1,19 @@
 from dash import Dash, html, dcc, callback, Output, Input, ctx, State, no_update
 import dash_bootstrap_components as dbc
+from dash.dependencies import MATCH, ALL
 
 import plotly.express as px
 import plotly.graph_objects as go
 
 from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.metrics import pairwise_distances
 from sklearn.linear_model import Ridge
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
+
+from scipy.spatial.distance import pdist, squareform
 
 from modAL.models import ActiveLearner, CommitteeRegressor
 from modAL.disagreement import max_std_sampling
@@ -19,9 +24,14 @@ from copy import deepcopy
 from PIL import Image
 import base64
 from io import BytesIO
+import seaborn as sns
+from scipy.spatial import distance
+import scipy as sp
+import random
 
 # TODO:
 # - remove item from pcp when unchecked (if needed)
+# - correctly approach the relabeling of samples
 
 # load dataset, select only a subset 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
@@ -66,26 +76,6 @@ def one_hot_encode(X, column):
 X = one_hot_encode(X, 'genre')
 X = one_hot_encode(X, 'topic')
 
-# create dimensionality reduction
-tsne = PCA(n_components = 2, random_state = 42)
-X_reduced = tsne.fit_transform(X)
-
-# create new dataframe
-data = X.copy()
-data['x_coor'], data['y_coor'] = X_reduced[:,0]*20, X_reduced[:,1]*20
-data['artist'], data['track'] = df[['artist_name']], df[['track_name']]
-data['genre'], data['topic'] = df['genre'], df['topic']
-
-# create training dataset
-train = pd.concat([X, Y], axis=1)
-
-# generate the pool
-X_pool = deepcopy(train[TRAIN_FEATURES].to_numpy())
-y_pool1 = deepcopy(train['danceability'].to_numpy())
-y_pool2 = deepcopy(train['energy'].to_numpy())
-y_pool3 = deepcopy(train['preference'].to_numpy())
-y_pool = [y_pool1, y_pool2, y_pool3]
-
 # initializing Committee members
 n_comm = 3
 comm_list = list()
@@ -110,21 +100,174 @@ for comm_idx in range(n_comm):
     )    
     comm_list.append(committee)
 
+# check if a model if fitted
+def is_model_fitted(model):
+    try:
+        # check if the model is fitted by checking one of the fitted attributes
+        check_is_fitted(model)
+        return True
+    except NotFittedError:
+        return False
+    
+# check if all learners are fitted 
+def are_all_learners_fitted(committee):
+    for learner in committee.learner_list:
+        if not is_model_fitted(learner.estimator):
+            return False
+    return True
+
+# taken from https://github.com/danilomotta/LMDS/tree/master
+def landmark_MDS(D, lands, dim):
+	Dl = D[:,lands]
+	n = len(Dl)
+
+	# Centering matrix
+	H = - np.ones((n, n))/n
+	np.fill_diagonal(H,1-1/n)
+	# YY^T
+	H = -H.dot(Dl**2).dot(H)/2
+
+	# Diagonalize
+	evals, evecs = np.linalg.eigh(H)
+
+	# Sort by eigenvalue in descending order
+	idx   = np.argsort(evals)[::-1]
+	evals = evals[idx]
+	evecs = evecs[:,idx]
+
+	# Compute the coordinates using positive-eigenvalued components only
+	w, = np.where(evals > 0)
+	if dim:
+		arr = evals
+		w = arr.argsort()[-dim:][::-1]
+		if np.any(evals[w]<0):
+			print('Error: Not enough positive eigenvalues for the selected dim.')
+			return []
+	if w.size==0:
+		print('Error: matrix is negative definite.')
+		return []
+
+	V = evecs[:,w]
+	L = V.dot(np.diag(np.sqrt(evals[w]))).T
+	N = D.shape[1]
+	Lh = V.dot(np.diag(1./np.sqrt(evals[w]))).T
+	Dm = D - np.tile(np.mean(Dl,axis=1),(N, 1)).T
+	dim = w.size
+	X = -Lh.dot(Dm)/2.
+	X -= np.tile(np.mean(X,axis=1),(N, 1)).T
+
+	_, evecs = sp.linalg.eigh(X.dot(X.T))
+
+	return (evecs[:,::-1].T.dot(X)).T
+
+# get distance matrix for the prediction variables
+def get_pred_dm(X):
+    model_fitted = True
+    for idx, committee in enumerate(comm_list):
+        if not are_all_learners_fitted(committee):
+            model_fitted = False
+            
+    preds = []
+    if model_fitted:
+        for comm_idx in range(n_comm):
+            pred = comm_list[comm_idx].predict(X.to_numpy())
+            preds.append(pred)        
+        result = np.array(preds).T
+    else:
+        result = np.full((X.shape[0], 3), 0.5)
+        
+    dm = pairwise_distances(result, result, metric='cosine', n_jobs=-1)
+    
+    return dm
+
+# get the dimensions for the combination of distance matrices
+def get_dm_coords(dm, dm_pred):
+    dm = dm + 0.5 * dm_pred
+
+    # normalize the matrix
+    lands = random.sample(range(0,dm.shape[0],1),int(dm.shape[0]**0.5))
+    lands = np.array(lands,dtype=int)
+
+    dm_copy = dm[lands,:] + 0.5 * dm_pred[lands,:]
+    xl_2 = landmark_MDS(dm_copy,lands,2)
+    return xl_2[:,0], xl_2[:,1]
+
+# create dimensionality reduction
+dm1 = pairwise_distances(X.to_numpy()[:,:5], X.to_numpy()[:,:5], metric='cosine', n_jobs=-1)
+jaccard_distances = pdist(X.to_numpy()[:,5:], metric='jaccard')
+dm2 = squareform(jaccard_distances)
+
+dm = dm1.copy()  # Make a copy of distance_matrix_1 to avoid modifying the original
+# Perform in-place operations to optimize performance
+np.multiply(dm, 0.375, out=dm)  # Scale dm by 0.375 in place
+np.add(dm, 0.125 * dm2, out=dm)  # Add 0.125 * dm2 to dm in place
+
+dm_pred = get_pred_dm(X)
+
+X_dm, y_dm = get_dm_coords(dm, dm_pred)
+
+# create new dataframe
+data = X.copy()
+data['x_coor'], data['y_coor'] = X_dm, y_dm
+data['artist'], data['track'] = df[['artist_name']], df[['track_name']]
+data['genre'], data['topic'] = df['genre'], df['topic']
+
+# create training dataset
+train = pd.concat([X, Y], axis=1)
+
+# generate the pool
+X_pool = deepcopy(train[TRAIN_FEATURES].to_numpy())
+y_pool1 = deepcopy(train['danceability'].to_numpy())
+y_pool2 = deepcopy(train['energy'].to_numpy())
+y_pool3 = deepcopy(train['preference'].to_numpy())
+y_pool = [y_pool1, y_pool2, y_pool3]
+
+def create_density_plot(data):
+    name = ['danceability', 'energy', 'preference']
+
+    # Create the Plotly figure
+    fig = go.Figure()
+
+    # Loop over each dataset and compute the KDE using seaborn
+    for idx, row in enumerate(data):
+        sns_kde = sns.kdeplot(np.array(row), bw=0.1)
+        line = sns_kde.get_lines()[0]
+        x_data = line.get_xdata()
+        y_data = line.get_ydata()
+
+        # Add a trace for each dataset in Plotly
+        fig.add_trace(go.Scatter(x=x_data, y=y_data, mode='lines', line_shape='spline', name=name[idx]))
+
+        # Clear the seaborn plot
+        sns_kde.clear()
+        
+    fig.update_yaxes(visible=False, showticklabels=False)
+    
+    # Define the custom tick labels
+    custom_ticks = {0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}
+
+    # Update the x-axis with custom tick labels
+    fig.update_xaxes(
+        tickvals=list(custom_ticks.keys()),
+        ticktext=list(custom_ticks.values()),
+        range=[-0.25, 1.25],  # Set the range to cover the full span of the x-axis
+    )
+    return fig
+
 # create a plot for the model performance over time
-performance_history = [[0] for i in range(n_comm)]
-for comm_idx in range(n_comm):
-    performance_history[comm_idx] = [None]
+performance_history = [[-2, 2] for i in range(n_comm)]
+fig2 = create_density_plot(performance_history)
 
-df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy', 'preference'])
-fig2 = px.line(df_perf)
-
-def add_custom_legend(fig):
+def add_custom_legend(fig): 
+    # define colors
+    colors = ['blue', 'red', 'black', 'pink', 'yellow', 'green']
+    
     # Add a dummy trace for the custom legend item 'unlabeled'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
-        marker=dict(size=10, color='blue'),
-        legendgroup='unlabeled',
+        marker=dict(size=10, color=colors[0]),
+        legendgroup='Scatters',
         showlegend=True,
         name='Unlabeled'
     ))
@@ -133,40 +276,52 @@ def add_custom_legend(fig):
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
-        marker=dict(size=10, color='red'),
-        legendgroup='labeled',
+        marker=dict(size=10, color=colors[1]),
+        legendgroup='Scatters',
         showlegend=True,
         name='Labeled'
     ))
     
-    # Load your image
-    image_path = 'src/images/guidance-icon.png'
-    image = Image.open(image_path)
-
-    # Encode the image as base64
-    buffered = BytesIO()
-    image.save(buffered, format="PNG")
-    encoded_image = base64.b64encode(buffered.getvalue()).decode()
-
-    # Add the image as an annotation
-    fig.add_layout_image(
-        dict(
-            source=f'data:image/png;base64,{encoded_image}',
-            xref="paper", yref="paper",
-            x=1.02, y=1,
-            sizex=0.06, sizey=0.06,
-            xanchor="left", yanchor="middle"
-        )
-    )
-
-    # Add a text annotation for 'AL guidance'
-    fig.add_annotation(
-        xref="paper", yref="paper",
-        x=1.09, y=1,
-        xanchor="left", yanchor="middle",
-        text="Guidance",
-        showarrow=False
-    )
+    # Add a dummy trace for the custom legend item 'Glyph'
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color=colors[2]),
+        legendgroup='Glyph',
+        showlegend=True,
+        name='Glyph:'
+    ))
+    
+    # Add a dummy trace for the custom legend item 'danceability'
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color=colors[3]),
+        legendgroup='Glyph',
+        showlegend=True,
+        name='Danceability'
+    ))
+    
+    # Add a dummy trace for the custom legend item 'energy'
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color=colors[4]),
+        legendgroup='Glyph',
+        showlegend=True,
+        name='Energy'
+    ))
+    
+    # Add a dummy trace for the custom legend item 'preference'
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color=colors[5]),
+        legendgroup='Glyph',
+        showlegend=True,
+        name='Preference'
+    ))
+    
     return fig
 
 # create a parallel categories plot
@@ -255,12 +410,15 @@ def get_pred(artist, track):
     else:
         return [0, 0, 0]
 
-# function to create the star glyphs
-def plot_star_glyphs_from_dataframe(data):
+# Function to create bar chart glyphs
+def plot_bar_chart_glyphs_from_dataframe(data):
     # Create an initial scatter plot
-    fig = px.scatter(data, x='x_coor', y='y_coor')
+    fig = go.Figure()
 
-    # Add traces for each star glyph
+    # Scaling factor to increase the size of the glyphs
+    scale_factor = 5
+
+    # Add traces for each bar chart glyph
     for i, row in data.iterrows():
         x = row['x_coor']
         y = row['y_coor']
@@ -270,68 +428,52 @@ def plot_star_glyphs_from_dataframe(data):
             values[comm_idx] = comm_list[comm_idx].predict([row[TRAIN_FEATURES].tolist()])[0]
 
         num_variables = len(values)
-        angles = np.linspace(0, 2*np.pi, num_variables, endpoint=False)
+        bar_width = 0.5 * scale_factor  # Width of each bar, scaled for larger glyphs
+        bar_spacing = 0.05 * scale_factor  # Reduced spacing between bars
+        # colors = px.colors.qualitative.Light24[:num_variables]  # Different colors for each bar
+        colors = ['yellow', 'pink', 'green']
 
-        # Calculate coordinates for the arms
-        x_arms = x + values * np.cos(angles)
-        y_arms = y + values * np.sin(angles)
-
-        # Close the shape
-        x_arms = np.append(x_arms, x_arms[0])
-        y_arms = np.append(y_arms, y_arms[0])
-
-        # Create hover text
-        hover_text = f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
-
-        # Add filled area trace
-        fig.add_trace(
-            go.Scatter(
-                x=x_arms,
-                y=y_arms,
-                fill='toself',
-                fillcolor='rgba(0, 255, 0, 1)',  # green fill color
-                line=dict(color='rgba(0, 255, 0, 0)'),  # hide line
-                showlegend=False,
-                hoverinfo='text',
-                text=hover_text
+        # Calculate x coordinates for the bars
+        x_bars = np.linspace(-num_variables * (bar_width + bar_spacing) / 2 + bar_width / 2, 
+                             num_variables * (bar_width + bar_spacing) / 2 - bar_width / 2, 
+                             num_variables) + x
+        
+        # Add bars as individual traces
+        for j in range(num_variables):
+            fig.add_trace(
+                go.Bar(
+                    x=[x_bars[j]],
+                    y=[values[j] * scale_factor],  # Scale bar height
+                    width=[bar_width],
+                    marker_color=colors[j],
+                    base=y,
+                    showlegend=False,
+                    hoverinfo='none'  # Remove text inside bars
+                )
             )
-        )
 
-        # Calculate coordinates for the circle
-        circle_angles = np.linspace(0, 2*np.pi, 100)
-        circle_x = x + np.cos(circle_angles)
-        circle_y = y + np.sin(circle_angles)
+        # Calculate coordinates for the square box
+        box_height = 1 * scale_factor  # Maximum height of the box, scaled
+        total_width = num_variables * (bar_width + bar_spacing)  # Total width of all bars plus spacing
+        box_x = [x - total_width / 2, x + total_width / 2, x + total_width / 2, x - total_width / 2, x - total_width / 2]
+        box_y = [y, y, y + box_height, y + box_height, y]    
 
-        # Add trace for the circle
+        # Add trace for the square box
         fig.add_trace(
             go.Scatter(
-                x=circle_x,
-                y=circle_y,
+                x=box_x,
+                y=box_y,
                 mode='lines',
-                line=dict(color='rgba(0, 255, 0, 1)'),  # green circle line
+                fill='toself', 
+                fillcolor='rgba(0,0,0,0)', 
+                line=dict(width=0.5, color='black'),  # black box line
                 showlegend=False,
                 hoverinfo='text',
-                text=hover_text
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
             )
         )
 
     return fig
-
-# check if a model if fitted
-def is_model_fitted(model):
-    try:
-        # check if the model is fitted by checking one of the fitted attributes
-        check_is_fitted(model)
-        return True
-    except NotFittedError:
-        return False
-    
-# check if all learners are fitted 
-def are_all_learners_fitted(committee):
-    for learner in committee.learner_list:
-        if not is_model_fitted(learner.estimator):
-            return False
-    return True
 
 # create scatterplot
 fig = px.scatter(data, x='x_coor', y='y_coor', 
@@ -410,12 +552,32 @@ app.layout = html.Div([
     State('main-vis', 'relayoutData'),
 )
 def update_plot(query_idx, labeled_idx, current_children, relayout_data):
+    blue_color_scale = [
+        [0, '#add8e6'],  # Light blue
+        [1, '#00008b']   # Dark blue
+    ]
+
+    # check if the AL models are fitted
+    model_fitted = True
+    for idx, committee in enumerate(comm_list):
+        if not are_all_learners_fitted(committee):
+            model_fitted = False
+
+    preds = [1 for i in range(len(data))]
+    # if the model is fitted, find the 5 most usefull points according to the AL model
+    if model_fitted:
+        preds, stds = comm_list[2].predict(X_pool, return_std=True)
+
+    data_copy = data.copy()
+    data_copy['preds'] = preds
+
     # retrieve the data
-    x_data = data[~data.index.isin(labeled_idx)]['x_coor']
-    y_data = data[~data.index.isin(labeled_idx)]['y_coor']
-    artist_data = data[~data.index.isin(labeled_idx)]['artist']
-    track_data = data[~data.index.isin(labeled_idx)]['track']
-    release_date_data = data[~data.index.isin(labeled_idx)]['release_date']
+    preds_data = data_copy[~data_copy.index.isin(labeled_idx)]['preds']
+    x_data = data_copy[~data_copy.index.isin(labeled_idx)]['x_coor']
+    y_data = data_copy[~data_copy.index.isin(labeled_idx)]['y_coor']
+    artist_data = data_copy[~data_copy.index.isin(labeled_idx)]['artist']
+    track_data = data_copy[~data_copy.index.isin(labeled_idx)]['track']
+    release_date_data = data_copy[~data_copy.index.isin(labeled_idx)]['release_date']
 
     # create the default scatter plot
     scatter_trace = go.Scatter(
@@ -425,10 +587,12 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data):
         hoverinfo='text',
         text=[f'Artist: {a}<br>Track: {t}<br>Release Date: {d}' for a, t, d in zip(artist_data, track_data, release_date_data)],
         marker=dict(
+            color=preds_data,
+            colorscale=blue_color_scale,  # Use the custom blue color scale
             size=5
         ),
-        showlegend=False
-    )
+        showlegend=False,
+        )
     layout = go.Layout(width=750, height=600)
     fig = go.Figure(data=[scatter_trace], layout=layout)
 
@@ -457,7 +621,7 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data):
 
     # create the scatter plot for the AL guidance scatters
     if query_idx:
-        glyph_fig = plot_star_glyphs_from_dataframe(data.iloc[query_idx])
+        glyph_fig = plot_bar_chart_glyphs_from_dataframe(data.iloc[query_idx])
         for trace in glyph_fig.data:
             fig.add_trace(trace)
     fig.update_layout(clickmode='event+select', margin=dict(l=20, r=20, t=20, b=20))
@@ -500,6 +664,9 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data):
             if i == 1:
                 trace.selectedpoints = []
 
+    fig.update_layout(
+        plot_bgcolor='white'
+    )
     return fig
 
 # callback for the AL lasso selection
@@ -621,13 +788,6 @@ def lasso_select(selected_data, current_children):
     prevent_initial_call='initial_duplicate'
 )
 def remove_items(btn2, current_children, pcp_df):
-    # if "remove-btn" == ctx.triggered_id:
-    #     current_children = []
-    #     MT = np.zeros(len(data.columns))
-    #     df_pcp = pd.DataFrame([MT], columns=data.columns)
-    #     pcp = create_pcp(df_pcp)
-    #     return current_children, pcp, df_pcp.to_dict('records')
-
     if "remove-btn" == ctx.triggered_id:
         pcp_df = pd.DataFrame(pcp_df)
         value = [item['props']['value'] for item in current_children]
@@ -669,16 +829,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference):
     # initialize variables
     query_idx = []
     reset_bool = False
-    df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy', 'preference'])
-
-    # create performance plot
-    fig2 = px.line(df_perf)
-    fig2.update_layout(
-        title="Model progress",
-        xaxis_title="Training iteration",
-        yaxis_title="Total standard deviation",
-        legend_title="Features",
-    )
+    fig2 = create_density_plot(performance_history)
     fig2.update_layout(
         height=300,  # specify the height
         width=350    # specify the width
@@ -705,7 +856,8 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference):
         for comm_idx in range(n_comm):
             _, stds = comm_list[comm_idx].predict(X_pool, return_std=True)
             std_list = [x + y for x, y in zip(std_list, stds)]
-            performance_history[comm_idx] = np.append(performance_history[comm_idx], sum(stds))
+            for i in range(0, len(pd.DataFrame(df))):
+                performance_history[comm_idx] = np.append(performance_history[comm_idx], y_pool_test[comm_idx])
             
         # convert std_list to a numpy array for efficient indexing
         std_array = np.array(std_list)
@@ -726,14 +878,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference):
         query_idx = sorted_largest_indices.tolist()
         
         # create performance plot
-        df_perf = pd.DataFrame(np.transpose(performance_history), columns=['danceability', 'energy', 'preference'])
-        fig2 = px.line(df_perf)
-        fig2.update_layout(
-            title="Model progress",
-            xaxis_title="Training iteration",
-            yaxis_title="Total standard deviation",
-            legend_title="Features",
-        )
+        fig2 = create_density_plot(performance_history)
         fig2.update_layout(
             height=300,  # specify the height
             width=350    # specify the width
@@ -786,7 +931,8 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
 
         # keep only the children that are not checked
         new_children = [i for i in current_children if not i['props']['value']]
-        # return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
+        #TODO maybe delete return statement
+        return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
     
     # if no data is clicked, return a mock-up pcp
     if not click_data:
@@ -819,7 +965,7 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
         sample = var_to_string(artist, track, release_date)
 
     elif click_data['points'][0]['curveNumber'] > 1:
-        id = (click_data['points'][0]['curveNumber'] - 3) // 2
+        id = (click_data['points'][0]['curveNumber'] - 5) // 4
         queried = query_idx[id]
         artist = data.iloc[queried]['artist']
         track = data.iloc[queried]['track']
