@@ -27,7 +27,6 @@ from functions import *
 
 # TODO:
 # - remove item from pcp when unchecked (if needed)
-# - correctly approach the relabeling of samples
 
 # load dataset, select only a subset 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
@@ -96,6 +95,10 @@ for comm_idx in range(n_comm):
     )    
     comm_list.append(committee)
 
+# define land marks
+lands = random.sample(range(0,X.to_numpy().shape[0],1),int(X.to_numpy().shape[0]**0.5))
+lands = np.array(lands,dtype=int)
+
 # create dimensionality reduction
 dm1 = pairwise_distances(X.to_numpy()[:,:5], X.to_numpy()[:,:5], metric='cosine', n_jobs=-1)
 jaccard_distances = pdist(X.to_numpy()[:,5:], metric='jaccard')
@@ -103,12 +106,14 @@ dm2 = squareform(jaccard_distances)
 
 dm = dm1.copy()  # Make a copy of distance_matrix_1 to avoid modifying the original
 # Perform in-place operations to optimize performance
-np.multiply(dm, 0.15, out=dm)  # Scale dm by 0.375 in place
-np.add(dm, 0.10 * dm2, out=dm)  # Add 0.125 * dm2 to dm in place
+np.multiply(dm, 0.15, out=dm)  # Scale dm by 0.15 in place
+np.add(dm, 0.10 * dm2, out=dm)  # Add 0.10 * dm2 to dm in place
 
-dm_pred = get_pred_dm(X, comm_list, n_comm)
+# dm = 0.15 * dm1 + 0.10 * dm2.T
 
-X_dm, y_dm = get_dm_coords(dm, dm_pred)
+dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
+
+X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
 
 # create new dataframe
 data = X.copy()
@@ -213,6 +218,10 @@ app.layout = html.Div([
         }, children=[
         html.H2("Data visualization"),
         dbc.Col(dcc.Graph(id='main-vis', figure=fig)),
+        html.Div([
+            html.Button('Download csv', id='download-btn'),
+            dcc.Download(id='download-dataframe-csv'),
+        ]),
     ]),
 
     html.Div(className='right-side', style={
@@ -319,8 +328,8 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
         preds, stds = comm_list[2].predict(X_pool, return_std=True)
 
     if reset_bool:
-        dm_pred = get_pred_dm(X, comm_list, n_comm)
-        X_dm, y_dm = get_dm_coords(dm, dm_pred)
+        dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
+        X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
         data['x_coor'], data['y_coor'] = X_dm, y_dm
         reset_bool = False
 
@@ -720,6 +729,8 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
                 pcp_df = pd.concat([pcp_df, row])
                 pcp = create_pcp(pcp_df)
             return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
+        
+    print('CLICK', click_data)
 
     # find and initialize the samples
     artist, track, release_date, sample = None, None, None, None
@@ -735,8 +746,16 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
         release_date = data.iloc[queried]['release_date']
         sample = var_to_string(artist, track, release_date)
 
-    elif click_data['points'][0]['curveNumber'] > 1:
-        id = (click_data['points'][0]['curveNumber'] - 5) // 4
+    elif click_data['points'][0]['curveNumber'] == 2:
+        id = click_data['points'][0]['pointNumber']
+        queried = query_idx[id]
+        artist = data.iloc[queried]['artist']
+        track = data.iloc[queried]['track']
+        release_date = data.iloc[queried]['release_date']
+        sample = var_to_string(artist, track, release_date)
+
+    elif click_data['points'][0]['curveNumber'] > 2:
+        id = (click_data['points'][0]['curveNumber'] - 5) // 5
         queried = query_idx[id]
         artist = data.iloc[queried]['artist']
         track = data.iloc[queried]['track']
@@ -787,6 +806,39 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
     new_pcp = create_pcp(pcp_df)
 
     return new_children, new_pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
+
+@callback(
+    Output("download-dataframe-csv", "data"),
+    Input("download-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def func(n_clicks):
+    # check if the AL models are fitted
+    model_fitted = True
+    for idx, committee in enumerate(comm_list):
+        if not are_all_learners_fitted(committee):
+            model_fitted = False
+
+    preds = []
+
+    if not model_fitted:
+        return dcc.send_data_frame(data.to_csv, "mydf.csv")
+    
+    if model_fitted:
+        for comm_idx in range(n_comm):
+            pred = comm_list[comm_idx].predict(X.to_numpy())
+            preds.append(pred)
+
+    for comm_idx in range(0, n_comm):
+        for j in range(0, len(X)):
+            if performance_history[comm_idx][j+1] != -1:
+                performance_history[comm_idx][j+1] = preds[comm_idx][j]
+
+    result = [sublist[1:-1] for sublist in performance_history]
+
+    data[['manual_dance', 'manual_ener', 'manual_pref']] = pd.DataFrame(result).T
+
+    return dcc.send_data_frame(data.to_csv, "mydf.csv")
 
 if __name__ == '__main__':
     app.run(debug=True)

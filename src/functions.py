@@ -80,7 +80,7 @@ def landmark_MDS(D, lands, dim):
 	return (evecs[:,::-1].T.dot(X)).T
 
 # get distance matrix for the prediction variables
-def get_pred_dm(X, comm_list, n_comm):
+def get_pred_dm(X, comm_list, n_comm, lands):
     model_fitted = True
     for idx, committee in enumerate(comm_list):
         if not are_all_learners_fitted(committee):
@@ -100,14 +100,9 @@ def get_pred_dm(X, comm_list, n_comm):
     return dm
 
 # get the dimensions for the combination of distance matrices
-def get_dm_coords(dm, dm_pred):
-    dm = dm + 0.75 * dm_pred
-
-    # normalize the matrix
-    lands = random.sample(range(0,dm.shape[0],1),int(dm.shape[0]**0.5))
-    lands = np.array(lands,dtype=int)
-
-    dm_copy = dm[lands,:] + 0.5 * dm_pred[lands,:]
+def get_dm_coords(dm, dm_pred, lands):
+    # dm_copy = dm + 0.75 * dm_pred
+    dm_copy = dm[lands,:] + 0.75 * dm_pred[lands,:]
     xl_2 = landmark_MDS(dm_copy,lands,2)
     return xl_2[:,0], xl_2[:,1]
 
@@ -274,11 +269,60 @@ def string_to_var(string):
     
 # Function to create bar chart glyphs
 def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES):
-    # Create an initial scatter plot
+    # retrieve the data
+    x_data = data['x_coor']
+    y_data = data['y_coor']
+    artist_data = data['artist']
+    track_data = data['track']
+    release_date_data = data['release_date']
+
     fig = go.Figure()
+
+    # Create an initial scatter plot
+    scatter_trace = go.Scatter(
+        x=x_data,
+        y=y_data,
+        mode='markers',
+        hoverinfo='text',
+        text=[f'Artist: {a}<br>Track: {t}<br>Release Date: {d}' for a, t, d in zip(artist_data, track_data, release_date_data)],
+        marker=dict(
+            color='black',
+        ),
+        showlegend=False,
+        )
+    
+    fig.add_trace(scatter_trace)
 
     # Scaling factor to increase the size of the glyphs
     scale_factor = 0.05
+
+    offset_value = max(x_data) / 3
+
+    # Define the offsets for the corners within each region
+    offsets = {
+        'top-left': (-offset_value, offset_value),
+        'top-right': (offset_value, offset_value),
+        'bottom-left': (-offset_value, -offset_value),
+        'bottom-right': (offset_value, -offset_value)
+    }
+
+    # Determine the plot range (assuming default Plotly behavior if not specified)
+    x_range = [data['x_coor'].min(), data['x_coor'].max()]
+    y_range = [data['y_coor'].min(), data['y_coor'].max()]
+
+    x_mid = (x_range[0] + x_range[1]) / 2
+    y_mid = (y_range[0] + y_range[1]) / 2
+
+    # Function to determine the corner based on the scatter point location
+    def get_corner(x, y):
+        if x < x_mid and y >= y_mid:
+            return 'top-left'
+        elif x >= x_mid and y >= y_mid:
+            return 'top-right'
+        elif x < x_mid and y < y_mid:
+            return 'bottom-left'
+        else:
+            return 'bottom-right'
 
     # Add traces for each bar chart glyph
     for i, row in data.iterrows():
@@ -294,10 +338,18 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
         bar_spacing = 0.05 * scale_factor  # Reduced spacing between bars
         colors = ['pink', 'goldenrod', 'green']
 
+        # Get the corner for the current scatter point
+        corner = get_corner(x, y)
+        offset_x, offset_y = offsets[corner]
+
+        # Calculate the new position for the glyph
+        glyph_x = x + offset_x
+        glyph_y = y + offset_y
+
         # Calculate x coordinates for the bars
         x_bars = np.linspace(-num_variables * (bar_width + bar_spacing) / 2 + bar_width / 2, 
                              num_variables * (bar_width + bar_spacing) / 2 - bar_width / 2, 
-                             num_variables) + x
+                             num_variables) + glyph_x
         
         # Add bars as individual traces
         for j in range(num_variables):
@@ -307,7 +359,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
                     y=[values[j] * scale_factor],  # Scale bar height
                     width=[bar_width],
                     marker_color=colors[j],
-                    base=y,
+                    base=glyph_y,
                     showlegend=False,
                     hoverinfo='none'  # Remove text inside bars
                 )
@@ -316,8 +368,8 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
         # Calculate coordinates for the square box
         box_height = 1 * scale_factor  # Maximum height of the box, scaled
         total_width = num_variables * (bar_width + bar_spacing)  # Total width of all bars plus spacing
-        box_x = [x - total_width / 2, x + total_width / 2, x + total_width / 2, x - total_width / 2, x - total_width / 2]
-        box_y = [y, y, y + box_height, y + box_height, y]    
+        box_x = [glyph_x - total_width / 2, glyph_x + total_width / 2, glyph_x + total_width / 2, glyph_x - total_width / 2, glyph_x - total_width / 2]
+        box_y = [glyph_y, glyph_y, glyph_y + box_height, glyph_y + box_height, glyph_y]    
 
         # Add trace for the square box
         fig.add_trace(
@@ -334,4 +386,24 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
             )
         )
 
+        # Determine line start and end based on glyph position and scatter position
+        if glyph_y >= y_mid:  # Glyph in bottom half
+            line_y_start = y
+            line_y_end = (glyph_y - box_height / 2) + 0.5*scale_factor
+        else:  # Glyph in top half
+            line_y_start = y
+            line_y_end = (glyph_y + box_height / 2) + 0.5*scale_factor
+
+        # Add trace for the line connecting scatter to glyph
+        fig.add_trace(
+            go.Scatter(
+                x=[x, glyph_x],
+                y=[line_y_start, line_y_end],
+                mode='lines',
+                line=dict(width=0.5, color='black'),
+                showlegend=False,
+                hoverinfo='none'
+            )
+        )
+        
     return fig
