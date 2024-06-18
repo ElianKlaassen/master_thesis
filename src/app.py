@@ -71,6 +71,8 @@ Y = df[['danceability', 'energy', 'preference']]
 X = one_hot_encode(X, 'genre')
 X = one_hot_encode(X, 'topic')
 
+iteration_count = 0
+
 # initializing Committee members
 n_comm = 3
 comm_list = list()
@@ -297,6 +299,7 @@ app.layout = html.Div([
     dcc.Store(id='labeled-store', data=labeled_idx),    
     dcc.Store(id='pcp-store'),
     dcc.Store(id='reset-bool', data=False),
+    dcc.Store(id='iteration-count', data=iteration_count),
 ], style={"display": "flex"})
 
 # callback to update the scatters in the main visualization
@@ -308,9 +311,10 @@ app.layout = html.Div([
     State('checklist-output', 'children'),
     State('main-vis', 'relayoutData'),
     Input('reset-bool', 'data'),
+    State('iteration-count', 'data'),
     prevent_initial_call='initial_duplicate'
 )
-def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_bool):
+def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_bool, iteration_count):
     blue_color_scale = [
         [0, '#add8e6'],  # Light blue
         [1, '#00008b']   # Dark blue
@@ -328,9 +332,10 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
         preds, stds = comm_list[2].predict(X_pool, return_std=True)
 
     if reset_bool:
-        dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
-        X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
-        data['x_coor'], data['y_coor'] = X_dm, y_dm
+        if iteration_count % 5 == 0:
+            dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
+            X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
+            data['x_coor'], data['y_coor'] = X_dm, y_dm
         reset_bool = False
 
     data_copy = data.copy()
@@ -588,6 +593,7 @@ def remove_items(btn2, current_children, pcp_df):
     Output('y_pool-store', 'data'),
     Output('query-store', 'data'), 
     Output('reset-bool', 'data', allow_duplicate=True),
+    Output('iteration-count', 'data'),
     Input('train-btn', 'n_clicks'),
     State('x_pool-store', 'data'),
     State('y_pool-store', 'data'),
@@ -597,9 +603,10 @@ def remove_items(btn2, current_children, pcp_df):
     State('pref-slider', 'value'),
     State('checklist-output', 'children'),
     State('query-store', 'data'),
+    State('iteration-count', 'data'),
     prevent_initial_call='initial_duplicate'
 )
-def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, current_children, query_idx):
+def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, current_children, query_idx, iteration_count):
     if isinstance(X_pool, list):
         X_pool = np.array(X_pool)
 
@@ -615,7 +622,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
     y_pool_test = [danceability, energy, preference]
 
     if not df:
-        return fig2, X_pool, y_pool, query_idx, reset_bool
+        return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
 
     # if the button is clicked, train the model
     if "train-btn" == ctx.triggered_id:
@@ -625,7 +632,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
                 reset_bool = True
 
         if not reset_bool:
-            return fig2, X_pool, y_pool, query_idx, reset_bool
+            return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
 
         artist = pd.DataFrame(df)['artist'].tolist()
         track = pd.DataFrame(df)['track'].tolist()
@@ -669,7 +676,9 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
             width=475    # specify the width
         )
 
-    return fig2, X_pool, y_pool, query_idx, reset_bool
+        iteration_count = iteration_count + 1
+
+    return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
 
 # callback for the labeling interface
 @app.callback(
