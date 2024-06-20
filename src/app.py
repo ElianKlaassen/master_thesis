@@ -25,9 +25,6 @@ import random
 
 from functions import *
 
-# TODO:
-# - remove item from pcp when unchecked (if needed)
-
 # load dataset, select only a subset 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
 df = df[df['release_date'] >= 1999]
@@ -59,19 +56,14 @@ df = df.drop_duplicates(subset=COMMON_FEATURES).reset_index(drop=True)
 X = df[['release_date', 'genre', 'loudness', 'acousticness', 'instrumentalness', 'valence', 'topic']]
 Y = df[['danceability', 'energy', 'preference']]
 
-# one hot encode the categorical columns
-# def one_hot_encode(X, column):
-    # enc = OneHotEncoder(handle_unknown='ignore')
-    # columns = sorted(X[column].unique())
-    # enc_df1 = pd.DataFrame(enc.fit_transform(X[[column]]).toarray(), columns=columns)
-    # X = X.join(enc_df1)
-    # X = X.drop([column], axis=1)
-    # return X
-
+# one hot encode the categorical features
 X = one_hot_encode(X, 'genre')
 X = one_hot_encode(X, 'topic')
 
+# number of training iterations
 iteration_count = 0
+# number of iteration before reset
+iteration_reset = 5
 
 # initializing Committee members
 n_comm = 3
@@ -102,19 +94,17 @@ lands = random.sample(range(0,X.to_numpy().shape[0],1),int(X.to_numpy().shape[0]
 lands = np.array(lands,dtype=int)
 
 # create dimensionality reduction
-dm1 = pairwise_distances(X.to_numpy()[:,:5], X.to_numpy()[:,:5], metric='cosine', n_jobs=-1)
+dm1 = pairwise_distances(X.to_numpy()[:,:5], X.to_numpy()[:,:5][lands], metric='cosine', n_jobs=-1)
 jaccard_distances = pdist(X.to_numpy()[:,5:], metric='jaccard')
-dm2 = squareform(jaccard_distances)
+dm2 = squareform(jaccard_distances)[lands]
 
-dm = dm1.copy()  # Make a copy of distance_matrix_1 to avoid modifying the original
-# Perform in-place operations to optimize performance
-np.multiply(dm, 0.15, out=dm)  # Scale dm by 0.15 in place
-np.add(dm, 0.10 * dm2, out=dm)  # Add 0.10 * dm2 to dm in place
+# create dimensionality matrix for the numerical + categorical features
+dm = 0.03 * dm1 + 0.02 * dm2.T
 
-# dm = 0.15 * dm1 + 0.10 * dm2.T
-
+# create dimensionality matrix for the prediction features
 dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
 
+# get 2d coordinates from the dimensionality matrices
 X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
 
 # create new dataframe
@@ -135,8 +125,8 @@ y_pool3 = deepcopy(train['preference'].to_numpy())
 y_pool = [y_pool1, y_pool2, y_pool3]
 
 # create a plot for the model performance over time
-perf_hist = [[-2, 2] for i in range(n_comm)]
-performance_history = [[-2] + [None] * len(data) + [2] for _ in perf_hist]
+perf_hist = [[-1, 2] for i in range(n_comm)]
+performance_history = [[-1] + [None] * len(data) + [2] for _ in perf_hist]
 fig2 = create_density_plot(performance_history)
 
 # turn string into processable string
@@ -155,23 +145,23 @@ def format_string(string):
         elif line.startswith("Track:"):
             track = line.split("Track: ")[1].strip()
 
-    preds = get_pred(artist, track)
-    for i in range(len(preds)):
-        preds[i] = round(preds[i], 2)
-
     # construct the formatted string
-    formatted_string = f"'{track}' by '{artist}'. Current prediction: {preds}"
+    formatted_string = f"'{track}' by '{artist}'."
     
     return formatted_string
 
+# get model prediction for a certain artist + track
 def get_pred(artist, track):
+    # retrieve data sample
     x = data[(data['artist'] == artist) & (data['track'] == track)][TRAIN_FEATURES]
     
+    # check if model is fitted
     model_fitted = True
     for idx, committee in enumerate(comm_list):
         if not are_all_learners_fitted(committee):
             model_fitted = False
-            
+
+    # get prediction    
     preds = []
     if model_fitted:
         for comm_idx in range(n_comm):
@@ -189,8 +179,7 @@ fig = px.scatter(data, x='x_coor', y='y_coor',
                                             'artist':True,
                                             'track':True,
                                             'release_date':True,
-                                            },
-                                width=750, height=600)
+                                            })
 fig = add_custom_legend(fig)
 fig.update_layout(clickmode='event+select', margin=dict(l=20, r=20, t=20, b=20),)
 
@@ -199,95 +188,109 @@ MT = np.zeros(len(data.columns))
 df_pcp = pd.DataFrame([MT], columns=data.columns)
 pcp = create_pcp(df_pcp)
 
-# adjust height and width for the performance plot
-fig2.update_layout(
-    height=300,  # specify the height
-    width=350    # specify the width
-)
-
 # dashboard layout
 app = Dash(__name__)
 app.layout = html.Div([
-    # Main visualization
-    html.Div(className='left-side', style={
-            'width': '40%', 
-            'margin-left':'2%', 
-            'margin-right': '2%', 
-            'display': 'inline-block', 
-            'border-color': 'black', 
-            'border': '1px solid', 
-            'box-shadow': 'rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px'
-        }, children=[
-        html.H2("Data visualization"),
-        dbc.Col(dcc.Graph(id='main-vis', figure=fig)),
-        html.Div([
-            html.Button('Download csv', id='download-btn'),
-            dcc.Download(id='download-dataframe-csv'),
+    # container for the title and the left-side block
+    html.Div(style={'width': '100%', 'float': 'left', 'margin-left': '2%'}, children=[
+        # text above the left-side block
+        html.H1("Interactive Visualization for Multi-task AL", style={'margin-left': '2%', 'margin-right': '2%'}),    
+        html.Div(className='left-side', style={
+                'width': '90%', 
+                'height':'575px',
+                'margin-left':'1%', 
+                'margin-right': '1%', 
+                'margin-bottom': '1%',
+                'display': 'inline-block', 
+                'border': '1px solid black', 
+                'boxShadow': 'rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px',
+                'borderRadius': '10px',  # add rounded edges
+                'backgroundColor': '#f9f9f9',
+                'padding': '10px'
+            }, children=[
+            html.H2("Data visualization"),
+            dbc.Col(dcc.Graph(id='main-vis', figure=fig)),
+            html.Div([
+                html.Button('Download csv', id='download-btn'),
+                dcc.Download(id='download-dataframe-csv'),
+            ]),
         ]),
     ]),
 
-    html.Div(className='right-side', style={
-            'width': '55%', 
-            'margin-left':'2%', 
-            'margin-right': '2%', 
-            'display': 'inline-block', 
-            'border-color': 'black', 
-            'border': '1px solid', 
-            'box-shadow': 'rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px'
-        }, children=[
-        # PCP plot
-        html.Div(className='top-right', children=[
-            html.H3("Data Attributes"),
-            dcc.Graph(id='pcp-vis', figure=pcp),
-        ]),
+    html.Div(className='right-side', style={'width': '100%', 'float': 'left'}, children=[
+        # container for the top-right and bottom-right sections
+        html.Div(style={'width': '100%', 'float': 'left', 'margin-left': '1%', 'margin-right': '1%'}, children=[
+            # PCP plot
+            html.Div(className='top-right', children=[
+                html.H3("Data Attributes"),
+                dcc.Graph(id='pcp-vis', figure=pcp),
+            ], style={
+                'height':'200px',
+                'margin-left':'1%', 
+                'margin-right': '1%',
+                'border': '1px solid black', 
+                'boxShadow': 'rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px',
+                'borderRadius': '10px',  # add rounded edges
+                'backgroundColor': '#f1f1f1',
+                'padding': '10px',
+                'marginBottom': '1%', 
+            }),
 
-        html.Hr(),
-
-        # slider, checkboxes, and button
-        html.Div(style={'display': 'flex', 'flex-wrap': 'wrap'}, children=[
-            html.Div(className='right-left-side', style={
-                'width': '45%',
-                'margin-left': '2%',
-                'margin-right': '2%',
-                'display': 'inline-block',
-                'margin-left': '10px',
-                'margin-bottom': '10px'
+            # slider, checkboxes, and button
+            html.Div(className='bottom-right', style={
+                'height':'425px',
+                'margin-left':'1%', 
+                'margin-right': '1%',
+                'border': '1px solid black', 
+                'boxShadow': 'rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px',
+                'borderRadius': '10px',  # add rounded edges
+                'backgroundColor': '#f1f1f1',
+                'padding': '10px'
             }, children=[
-                html.H3("Controls"),
-                html.Div(children=[
-                    html.Label('Danceability:', style={'font-weight': 'bold'}),
-                    dcc.Slider(min=0, max=1, value=0.5, 
-                            marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}, 
-                            id='dance-slider')
+                html.Div(className='right-left-side', style={
+                    'height':'400px',
+                    'width': '48%',
+                    'float': 'left',
+                    'margin-bottom': '1%',
+                    'padding': '5px',
+                }, children=[
+                    html.H3("Controls"),
+                    html.Div(children=[
+                        html.Label('Danceability:', style={'font-weight': 'bold', 'font-size':'13px'}),
+                        dcc.Slider(min=0, max=1, value=0.5, 
+                                marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}, 
+                                id='dance-slider')
+                    ]),
+                    html.Div(children=[
+                        html.Label('Energy:', style={'font-weight': 'bold', 'font-size':'13px'}),
+                        dcc.Slider(min=0, max=1, value=0.5, 
+                                marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'},
+                                id='energy-slider')
+                    ]),
+                    html.Div(children=[
+                        html.Label('Preference:', style={'font-weight': 'bold', 'font-size':'13px'}),
+                        dcc.Slider(min=0, max=1, value=0.5, 
+                                marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}, 
+                                id='pref-slider')
+                    ]),
+                    html.Div(id='checklist-output', style={"minHeight": "150px", "maxHeight": "150px", "overflow-y": "scroll"}),
+                    html.Button('Train the model!', id='train-btn', n_clicks=0, style={'margin':'1px'}), 
+                    html.Button('Remove selected items', id='remove-btn', n_clicks=0, style={'margin':'1px'}),
                 ]),
-                html.Div(children=[
-                    html.Label('Energy:', style={'font-weight': 'bold'}),
-                    dcc.Slider(min=0, max=1, value=0.5, 
-                            marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'},
-                            id='energy-slider')
-                ]),
-                html.Div(children=[
-                    html.Label('Preference:', style={'font-weight': 'bold'}),
-                    dcc.Slider(min=0, max=1, value=0.5, 
-                            marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}, 
-                            id='pref-slider')
-                ]),
-                html.Div(id='checklist-output', style={"minHeight": "200px", "maxHeight": "200px", "overflow-y": "scroll"}),
-                html.Button('Train the model!', id='train-btn', n_clicks=0), 
-                html.Button('Remove selected items', id='remove-btn', n_clicks=0),
+                # performance plot
+                html.Div(className='right-right-side', style={
+                    'height':'400px',
+                    'width': '48%',
+                    'float': 'right',
+                    'margin-bottom': '1%',
+                    'padding': '5px',
+                }, children=[
+                    html.H3("Labeling distribution"),
+                    html.Div(children=[
+                        dcc.Graph(id='acc-vis', figure=fig2), 
+                    ]), 
+                ])
             ]),
-            # performance plot
-            html.Div(className='right-right-side', style={
-                'width': '45%',
-                'margin-left': '2%',
-                'margin-right': '2%',
-                'display': 'inline-block'
-            }, children=[
-                html.H3("Labeling distribution"),
-                html.Div(children=[
-                    dcc.Graph(id='acc-vis', figure=fig2), 
-                ]), 
-            ])
         ]),
     ]),
 
@@ -300,7 +303,8 @@ app.layout = html.Div([
     dcc.Store(id='pcp-store'),
     dcc.Store(id='reset-bool', data=False),
     dcc.Store(id='iteration-count', data=iteration_count),
-], style={"display": "flex"})
+], style={"display": "flex", "flexDirection": "row", "justifyContent": "space-between", "alignItems": "flex-start", "padding": "20px"})
+
 
 # callback to update the scatters in the main visualization
 @app.callback(
@@ -316,8 +320,8 @@ app.layout = html.Div([
 )
 def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_bool, iteration_count):
     blue_color_scale = [
-        [0, '#add8e6'],  # Light blue
-        [1, '#00008b']   # Dark blue
+        [0, '#add8e6'],  # light blue
+        [1, '#00008b']   # dark blue
     ]
 
     # check if the AL models are fitted
@@ -327,12 +331,16 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
             model_fitted = False
 
     preds = [1 for i in range(len(data))]
-    # if the model is fitted, find the 5 most usefull points according to the AL model
-    if model_fitted:
-        preds, stds = comm_list[2].predict(X_pool, return_std=True)
 
+    # if model is fitted, get preference prediction
+    if model_fitted:
+        preds = comm_list[2].predict(X_pool)
+
+    # if the training button is pressed
     if reset_bool:
-        if iteration_count % 5 == 0:
+        # and the number of iterations is divible by a set amount
+        if iteration_count % iteration_reset == 0:
+            # recalculate dimensionality coordinates
             dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
             X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
             data['x_coor'], data['y_coor'] = X_dm, y_dm
@@ -360,7 +368,7 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
         text=[f'Artist: {a}<br>Track: {t}<br>Release Date: {d}' for a, t, d in zip(artist_data, track_data, release_date_data)],
         marker=dict(
             color=preds_data,
-            colorscale=blue_color_scale,  # Use the custom blue color scale
+            colorscale=blue_color_scale,  # use the custom blue color scale
             size=5
         ),
         showlegend=False,
@@ -410,6 +418,7 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
 
     fig = add_custom_legend(fig)
 
+    # find out which samples are selected by the user
     indices = []
     indices_2 = []
     if current_children:
@@ -423,6 +432,7 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
                     index = fig.data[1]['text'].index(i)
                     indices_2.append(index)
 
+    # select the labels in the plot
     if indices:
         for i, trace in enumerate(fig.data):
             if i == 0:
@@ -436,17 +446,25 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
             if i == 1:
                 trace.selectedpoints = []
 
+    # combine layers
     fig.update_layout(
         yaxis2=dict(overlaying='y', layer='below traces')
     )
-    fig.update_yaxes(matches='y')  # This ensures the ranges match
-    fig.update_xaxes(matches='x')  # This ensures the ranges match
 
+    # this ensures the ranges match
+    fig.update_yaxes(matches='y')
+    fig.update_xaxes(matches='x')
+
+    # remove background color
     fig.update_layout(
-        plot_bgcolor='white'
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
     )
+
+    # remove axes
     fig.update_xaxes(visible=False, showticklabels=False)
     fig.update_yaxes(visible=False, showticklabels=False)
+
     return fig, reset_bool
 
 # callback for the AL lasso selection
@@ -557,7 +575,7 @@ def lasso_select(selected_data, current_children):
 
     return current_children, pcp
 
-
+# callback for the removal of selected items from the labeling list
 @callback(
     Output('checklist-output', 'children', allow_duplicate=True),
     Output('pcp-vis', 'figure', allow_duplicate=True),
@@ -611,13 +629,8 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
         X_pool = np.array(X_pool)
 
     # initialize variables
-    # query_idx = []
     reset_bool = False
     fig2 = create_density_plot(performance_history)
-    fig2.update_layout(
-        height=475,  # specify the height
-        width=475    # specify the width
-    )
 
     y_pool_test = [danceability, energy, preference]
 
@@ -671,10 +684,6 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
         
         # create performance plot
         fig2 = create_density_plot(performance_history)
-        fig2.update_layout(
-            height=475,  # specify the height
-            width=475    # specify the width
-        )
 
         iteration_count = iteration_count + 1
 
@@ -738,8 +747,6 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
                 pcp_df = pd.concat([pcp_df, row])
                 pcp = create_pcp(pcp_df)
             return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
-        
-    print('CLICK', click_data)
 
     # find and initialize the samples
     artist, track, release_date, sample = None, None, None, None
@@ -816,6 +823,7 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
 
     return new_children, new_pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
 
+# callback to download a csv with the original data and the new model predictions
 @callback(
     Output("download-dataframe-csv", "data"),
     Input("download-btn", "n_clicks"),
@@ -833,11 +841,13 @@ def func(n_clicks):
     if not model_fitted:
         return dcc.send_data_frame(data.to_csv, "mydf.csv")
     
+    # make model predictions
     if model_fitted:
         for comm_idx in range(n_comm):
             pred = comm_list[comm_idx].predict(X.to_numpy())
             preds.append(pred)
 
+    # add predictions to list
     for comm_idx in range(0, n_comm):
         for j in range(0, len(X)):
             if performance_history[comm_idx][j+1] != -1:

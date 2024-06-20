@@ -1,0 +1,32 @@
+/* Danceability slider */
+#dance-slider .rc-slider-track {
+    background-color: pink;
+}
+#dance-slider .rc-slider-rail {
+    background-color: lightgray;
+}
+#dance-slider .rc-slider-handle {
+    border-color: pink;
+}
+
+/* Energy slider */
+#energy-slider .rc-slider-track {
+    background-color: goldenrod;
+}
+#energy-slider .rc-slider-rail {
+    background-color: lightgray;
+}
+#energy-slider .rc-slider-handle {
+    border-color: goldenrod;
+}
+
+/* Preference slider */
+#pref-slider .rc-slider-track {
+    background-color: green;
+}
+#pref-slider .rc-slider-rail {
+    background-color: lightgray;
+}
+#pref-slider .rc-slider-handle {
+    border-color: green;
+}

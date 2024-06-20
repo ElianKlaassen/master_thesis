@@ -81,11 +81,13 @@ def landmark_MDS(D, lands, dim):
 
 # get distance matrix for the prediction variables
 def get_pred_dm(X, comm_list, n_comm, lands):
+    # check if model is fitted
     model_fitted = True
     for idx, committee in enumerate(comm_list):
         if not are_all_learners_fitted(committee):
             model_fitted = False
-            
+
+    # get predictions 
     preds = []
     if model_fitted:
         for comm_idx in range(n_comm):
@@ -95,25 +97,25 @@ def get_pred_dm(X, comm_list, n_comm, lands):
     else:
         result = np.full((X.shape[0], 3), 0.5)
         
-    dm = pairwise_distances(result, result, metric='cosine', n_jobs=-1)
+    # create dimensionality matrix
+    dm = pairwise_distances(result, result[lands], metric='cosine', n_jobs=-1)
     
     return dm
 
 # get the dimensions for the combination of distance matrices
 def get_dm_coords(dm, dm_pred, lands):
-    # dm_copy = dm + 0.75 * dm_pred
-    dm_copy = dm[lands,:] + 0.75 * dm_pred[lands,:]
-    xl_2 = landmark_MDS(dm_copy,lands,2)
+    dm_copy = dm + 0.95 * dm_pred
+    xl_2 = landmark_MDS(dm_copy.T,lands,2)
     return xl_2[:,0], xl_2[:,1]
 
 # remove non values from a nested list
 def remove_none_values(nested_list):
-    # Temporary list to store lists without None values
+    # temporary list to store lists without None values
     cleaned_list = []
 
-    # Iterate through each sublist in the nested list
+    # iterate through each sublist in the nested list
     for sublist in nested_list:
-        # Filter out None values and append the cleaned sublist to cleaned_list
+        # filter out None values and append the cleaned sublist to cleaned_list
         cleaned_sublist = [item for item in sublist if item is not None]
         cleaned_list.append(cleaned_sublist)
 
@@ -126,40 +128,75 @@ def create_density_plot(perf_hist):
 
     data = remove_none_values(perf_hist)
 
-    # Create the Plotly figure
+    # create the Plotly figure
     fig = go.Figure()
 
-    # Loop over each dataset and compute the KDE using seaborn
+    # loop over each dataset and compute the KDE using seaborn
     for idx, row in enumerate(data):
         sns_kde = sns.kdeplot(np.array(row), bw=0.1)
         line = sns_kde.get_lines()[0]
         x_data = line.get_xdata()
         y_data = line.get_ydata()
 
-        # Add a trace for each dataset in Plotly
+        # add a trace for each dataset in Plotly
         fig.add_trace(go.Scatter(x=x_data, y=y_data, mode='lines', line_shape='spline', line=dict(color=colors[idx]), name=name[idx]))
 
-        # Clear the seaborn plot
+        # clear the seaborn plot
         sns_kde.clear()
         
     fig.update_yaxes(visible=False, showticklabels=False)
     
-    # Define the custom tick labels
+    # define the custom tick labels
     custom_ticks = {0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}
 
-    # Update the x-axis with custom tick labels
+    # update the x-axis with custom tick labels
     fig.update_xaxes(
         tickvals=list(custom_ticks.keys()),
         ticktext=list(custom_ticks.values()),
-        range=[-0.25, 1.25],  # Set the range to cover the full span of the x-axis
+        range=[-0.25, 1.25],  # set the range to cover the full span of the x-axis
     )
+
+    # specify the height and width
+    fig.update_layout(
+        height=325,
+        width=325,
+    )
+
+    # remove some margins around the plot
+    fig.update_layout(
+        margin=dict(l=20, r=20, t=20, b=20),
+    )
+
+    # update layout to position the legend outside and below the plot
+    fig.update_layout(
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.4,  # adjust this value to move the legend up/down
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(b=100)  # adjust bottom margin to prevent clipping of the legend
+    )
+
+    # remove background color
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+
+    # add line around the plot
+    fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
+    fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
+
     return fig
 
+# create a custom legend for the scatter plot
 def add_custom_legend(fig): 
     # define colors
     colors = ['blue', 'red', 'black', 'pink', 'goldenrod', 'green']
     
-    # Add a dummy trace for the custom legend item 'unlabeled'
+    # add a dummy trace for the custom legend item 'unlabeled'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
@@ -169,7 +206,7 @@ def add_custom_legend(fig):
         name='Unlabeled'
     ))
 
-    # Add a dummy trace for the custom legend item 'labeled'
+    # add a dummy trace for the custom legend item 'labeled'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
@@ -179,7 +216,7 @@ def add_custom_legend(fig):
         name='Labeled'
     ))
     
-    # Add a dummy trace for the custom legend item 'Glyph'
+    # add a dummy trace for the custom legend item 'Glyph'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
@@ -189,7 +226,7 @@ def add_custom_legend(fig):
         name='Glyph:'
     ))
     
-    # Add a dummy trace for the custom legend item 'danceability'
+    # add a dummy trace for the custom legend item 'danceability'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
@@ -199,7 +236,7 @@ def add_custom_legend(fig):
         name='Danceability'
     ))
     
-    # Add a dummy trace for the custom legend item 'energy'
+    # add a dummy trace for the custom legend item 'energy'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
@@ -209,7 +246,7 @@ def add_custom_legend(fig):
         name='Energy'
     ))
     
-    # Add a dummy trace for the custom legend item 'preference'
+    # add a dummy trace for the custom legend item 'preference'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
@@ -226,6 +263,7 @@ bins = [-0.1, 0.2, 0.4, 0.6, 0.8, 1]
 labels = ['Very bad', 'Bad', 'Neutral', 'Good', 'Very Good']
 rl_labels = ['Very old', 'Old', 'Neutral', 'New', 'Very new']
 
+# create a parallel categories plot
 def create_pcp(pcp_df, bins=bins, labels=labels, rl_labels=rl_labels):
     pcp_df['Release Date'] = pd.cut(pcp_df['release_date'], bins=bins, labels=rl_labels)
     pcp_df['Loudness'] = pd.cut(pcp_df['loudness'], bins=bins, labels=labels)
@@ -234,10 +272,23 @@ def create_pcp(pcp_df, bins=bins, labels=labels, rl_labels=rl_labels):
     pcp_df['Valence'] = pd.cut(pcp_df['valence'], bins=bins, labels=labels)
     pcp = px.parallel_categories(pcp_df[['Release Date', 'Loudness', 'Acousticness', 'Instrumentalness', 'Valence', 'genre', 'topic']])
     
+    # specify height and width
     pcp.update_layout(
-        height=300,  # specify the height
-        width=800    # specify the width
+        height=150,
+        width=725,
     )
+
+    # remove margins around the plot
+    pcp.update_layout(
+        margin=dict(l=20, r=20, t=20, b=20),
+    )
+
+    # remove background color
+    pcp.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+
     return pcp
 
 # create processable string from variables
@@ -267,7 +318,7 @@ def string_to_var(string):
 
     return artist, track, release_date
     
-# Function to create bar chart glyphs
+# function to create bar chart glyphs
 def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES):
     # retrieve the data
     x_data = data['x_coor']
@@ -278,7 +329,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
 
     fig = go.Figure()
 
-    # Create an initial scatter plot
+    # create an initial scatter plot
     scatter_trace = go.Scatter(
         x=x_data,
         y=y_data,
@@ -293,12 +344,12 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
     
     fig.add_trace(scatter_trace)
 
-    # Scaling factor to increase the size of the glyphs
+    # scaling factor to increase the size of the glyphs
     scale_factor = 0.05
 
-    offset_value = max(x_data) / 3
+    offset_value = 0.1
 
-    # Define the offsets for the corners within each region
+    # define the offsets for the corners within each region
     offsets = {
         'top-left': (-offset_value, offset_value),
         'top-right': (offset_value, offset_value),
@@ -306,14 +357,14 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
         'bottom-right': (offset_value, -offset_value)
     }
 
-    # Determine the plot range (assuming default Plotly behavior if not specified)
+    # determine the plot range (assuming default Plotly behavior if not specified)
     x_range = [data['x_coor'].min(), data['x_coor'].max()]
     y_range = [data['y_coor'].min(), data['y_coor'].max()]
 
     x_mid = (x_range[0] + x_range[1]) / 2
     y_mid = (y_range[0] + y_range[1]) / 2
 
-    # Function to determine the corner based on the scatter point location
+    # function to determine the corner based on the scatter point location
     def get_corner(x, y):
         if x < x_mid and y >= y_mid:
             return 'top-left'
@@ -324,7 +375,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
         else:
             return 'bottom-right'
 
-    # Add traces for each bar chart glyph
+    # add traces for each bar chart glyph
     for i, row in data.iterrows():
         x = row['x_coor']
         y = row['y_coor']
@@ -334,44 +385,44 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
             values[comm_idx] = comm_list[comm_idx].predict([row[TRAIN_FEATURES].tolist()])[0]
 
         num_variables = len(values)
-        bar_width = 0.5 * scale_factor  # Width of each bar, scaled for larger glyphs
-        bar_spacing = 0.05 * scale_factor  # Reduced spacing between bars
+        bar_width = 0.5 * scale_factor  # width of each bar, scaled for larger glyphs
+        bar_spacing = 0.05 * scale_factor  # reduced spacing between bars
         colors = ['pink', 'goldenrod', 'green']
 
-        # Get the corner for the current scatter point
+        # get the corner for the current scatter point
         corner = get_corner(x, y)
         offset_x, offset_y = offsets[corner]
 
-        # Calculate the new position for the glyph
+        # calculate the new position for the glyph
         glyph_x = x + offset_x
         glyph_y = y + offset_y
 
-        # Calculate x coordinates for the bars
+        # calculate x coordinates for the bars
         x_bars = np.linspace(-num_variables * (bar_width + bar_spacing) / 2 + bar_width / 2, 
                              num_variables * (bar_width + bar_spacing) / 2 - bar_width / 2, 
                              num_variables) + glyph_x
         
-        # Add bars as individual traces
+        # add bars as individual traces
         for j in range(num_variables):
             fig.add_trace(
                 go.Bar(
                     x=[x_bars[j]],
-                    y=[values[j] * scale_factor],  # Scale bar height
+                    y=[values[j] * scale_factor],  # scale bar height
                     width=[bar_width],
                     marker_color=colors[j],
                     base=glyph_y,
                     showlegend=False,
-                    hoverinfo='none'  # Remove text inside bars
+                    hoverinfo='none'  # remove text inside bars
                 )
             )
 
-        # Calculate coordinates for the square box
-        box_height = 1 * scale_factor  # Maximum height of the box, scaled
-        total_width = num_variables * (bar_width + bar_spacing)  # Total width of all bars plus spacing
+        # calculate coordinates for the square box
+        box_height = 1 * scale_factor  # maximum height of the box, scaled
+        total_width = num_variables * (bar_width + bar_spacing)  # total width of all bars plus spacing
         box_x = [glyph_x - total_width / 2, glyph_x + total_width / 2, glyph_x + total_width / 2, glyph_x - total_width / 2, glyph_x - total_width / 2]
         box_y = [glyph_y, glyph_y, glyph_y + box_height, glyph_y + box_height, glyph_y]    
 
-        # Add trace for the square box
+        # add trace for the square box
         fig.add_trace(
             go.Scatter(
                 x=box_x,
@@ -386,15 +437,15 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
             )
         )
 
-        # Determine line start and end based on glyph position and scatter position
-        if glyph_y >= y_mid:  # Glyph in bottom half
+        # determine line start and end based on glyph position and scatter position
+        if glyph_y >= y_mid:  # glyph in bottom half
             line_y_start = y
             line_y_end = (glyph_y - box_height / 2) + 0.5*scale_factor
-        else:  # Glyph in top half
+        else:  # glyph in top half
             line_y_start = y
             line_y_end = (glyph_y + box_height / 2) + 0.5*scale_factor
 
-        # Add trace for the line connecting scatter to glyph
+        # add trace for the line connecting scatter to glyph
         fig.add_trace(
             go.Scatter(
                 x=[x, glyph_x],
