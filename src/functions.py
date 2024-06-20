@@ -104,7 +104,7 @@ def get_pred_dm(X, comm_list, n_comm, lands):
 
 # get the dimensions for the combination of distance matrices
 def get_dm_coords(dm, dm_pred, lands):
-    dm_copy = dm + 0.95 * dm_pred
+    dm_copy = dm + 0.9 * dm_pred
     xl_2 = landmark_MDS(dm_copy.T,lands,2)
     return xl_2[:,0], xl_2[:,1]
 
@@ -123,8 +123,8 @@ def remove_none_values(nested_list):
 
 # create the labeling density plot
 def create_density_plot(perf_hist):
-    name = ['danceability', 'energy', 'preference']
-    colors = ['pink', 'goldenrod', 'green']
+    name = ['Danceability', 'Energy', 'Preference']
+    colors = ['#b2df8a', '#33a02c', '#fb9a99']
 
     data = remove_none_values(perf_hist)
 
@@ -194,7 +194,7 @@ def create_density_plot(perf_hist):
 # create a custom legend for the scatter plot
 def add_custom_legend(fig): 
     # define colors
-    colors = ['blue', 'red', 'black', 'pink', 'goldenrod', 'green']
+    colors = ['blue', 'red', 'black', '#b2df8a', '#33a02c', '#fb9a99']
     
     # add a dummy trace for the custom legend item 'unlabeled'
     fig.add_trace(go.Scatter(
@@ -230,38 +230,38 @@ def add_custom_legend(fig):
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
-        marker=dict(size=10, color=colors[3]),
+        marker=dict(symbol='square', size=10, color=colors[3]),
         legendgroup='Glyph',
         showlegend=True,
-        name='Danceability'
+        name='      Danceability'
     ))
     
     # add a dummy trace for the custom legend item 'energy'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
-        marker=dict(size=10, color=colors[4]),
+        marker=dict(symbol='square', size=10, color=colors[4]),
         legendgroup='Glyph',
         showlegend=True,
-        name='Energy'
+        name='      Energy'
     ))
     
     # add a dummy trace for the custom legend item 'preference'
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
         mode='markers',
-        marker=dict(size=10, color=colors[5]),
+        marker=dict(symbol='square', size=10, color=colors[5]),
         legendgroup='Glyph',
         showlegend=True,
-        name='Preference'
+        name='      Preference'
     ))
     
     return fig
 
 # initialize pcp attributes
 bins = [-0.1, 0.2, 0.4, 0.6, 0.8, 1]
-labels = ['Very bad', 'Bad', 'Neutral', 'Good', 'Very Good']
-rl_labels = ['Very old', 'Old', 'Neutral', 'New', 'Very new']
+labels = ['Very Bad', 'Bad', 'Neutral', 'Good', 'Very Good']
+rl_labels = ['Very Old', 'Old', 'Neutral', 'New', 'Very New']
 
 # create a parallel categories plot
 def create_pcp(pcp_df, bins=bins, labels=labels, rl_labels=rl_labels):
@@ -270,7 +270,7 @@ def create_pcp(pcp_df, bins=bins, labels=labels, rl_labels=rl_labels):
     pcp_df['Acousticness'] = pd.cut(pcp_df['acousticness'], bins=bins, labels=labels)
     pcp_df['Instrumentalness'] = pd.cut(pcp_df['instrumentalness'], bins=bins, labels=labels)
     pcp_df['Valence'] = pd.cut(pcp_df['valence'], bins=bins, labels=labels)
-    pcp = px.parallel_categories(pcp_df[['Release Date', 'Loudness', 'Acousticness', 'Instrumentalness', 'Valence', 'genre', 'topic']])
+    pcp = px.parallel_categories(pcp_df[['Release Date', 'Loudness', 'Acousticness', 'Instrumentalness', 'Valence', 'Genre', 'Topic']])
     
     # specify height and width
     pcp.update_layout(
@@ -387,7 +387,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
         num_variables = len(values)
         bar_width = 0.5 * scale_factor  # width of each bar, scaled for larger glyphs
         bar_spacing = 0.05 * scale_factor  # reduced spacing between bars
-        colors = ['pink', 'goldenrod', 'green']
+        colors = ['#b2df8a', '#33a02c', '#fb9a99']
 
         # get the corner for the current scatter point
         corner = get_corner(x, y)

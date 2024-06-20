@@ -28,6 +28,7 @@ from functions import *
 # load dataset, select only a subset 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
 df = df[df['release_date'] >= 1999]
+df = df.rename(columns={"genre": "Genre", "topic": "Topic"})
 
 # normalize the release date
 scaler = MinMaxScaler()
@@ -40,30 +41,30 @@ TRAIN_FEATURES = ['release_date', 'loudness', 'acousticness', 'instrumentalness'
                 'jazz', 'pop', 'reggae', 'rock', 'feelings', 'music', 'night/time', 'obscene', 'romantic', 'sadness', 
                 'violence', 'world/life']
 
-PCP_FEATURES = ['release_date', 'loudness', 'acousticness', 'instrumentalness', 'valence', 'genre', 'topic']
+PCP_FEATURES = ['release_date', 'loudness', 'acousticness', 'instrumentalness', 'valence', 'Genre', 'Topic']
 
 COMMON_FEATURES = ['release_date', 'loudness', 'acousticness', 'instrumentalness', 'valence']
 
 # initialize pcp attributes
 bins = [-0.1, 0.2, 0.4, 0.6, 0.8, 1]
-labels = ['Very bad', 'Bad', 'Neutral', 'Good', 'Very Good']
-rl_labels = ['Very old', 'Old', 'Neutral', 'New', 'Very new']
+labels = ['Very Bad', 'Bad', 'Neutral', 'Good', 'Very Good']
+rl_labels = ['Very Old', 'Old', 'Neutral', 'New', 'Very New']
 
 # remove duplicates
 df = df.drop_duplicates(subset=COMMON_FEATURES).reset_index(drop=True)
 
 # define X and Y frames
-X = df[['release_date', 'genre', 'loudness', 'acousticness', 'instrumentalness', 'valence', 'topic']]
+X = df[['release_date', 'Genre', 'loudness', 'acousticness', 'instrumentalness', 'valence', 'Topic']]
 Y = df[['danceability', 'energy', 'preference']]
 
 # one hot encode the categorical features
-X = one_hot_encode(X, 'genre')
-X = one_hot_encode(X, 'topic')
+X = one_hot_encode(X, 'Genre')
+X = one_hot_encode(X, 'Topic')
 
 # number of training iterations
 iteration_count = 0
 # number of iteration before reset
-iteration_reset = 5
+iteration_reset = 2
 
 # initializing Committee members
 n_comm = 3
@@ -99,7 +100,7 @@ jaccard_distances = pdist(X.to_numpy()[:,5:], metric='jaccard')
 dm2 = squareform(jaccard_distances)[lands]
 
 # create dimensionality matrix for the numerical + categorical features
-dm = 0.03 * dm1 + 0.02 * dm2.T
+dm = 0.06 * dm1 + 0.04 * dm2.T
 
 # create dimensionality matrix for the prediction features
 dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
@@ -111,7 +112,7 @@ X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
 data = X.copy()
 data['x_coor'], data['y_coor'] = X_dm, y_dm
 data['artist'], data['track'] = df[['artist_name']], df[['track_name']]
-data['genre'], data['topic'] = df['genre'], df['topic']
+data['Genre'], data['Topic'] = df['Genre'], df['Topic']
 data['manual_dance'], data['manual_ener'], data['manual_pref'] = -1, -1, -1
 
 # create training dataset
@@ -146,7 +147,7 @@ def format_string(string):
             track = line.split("Track: ")[1].strip()
 
     # construct the formatted string
-    formatted_string = f"'{track}' by '{artist}'."
+    formatted_string = f"{track.title()} by {artist.title()}"
     
     return formatted_string
 
@@ -194,7 +195,7 @@ app.layout = html.Div([
     # container for the title and the left-side block
     html.Div(style={'width': '100%', 'float': 'left', 'margin-left': '2%'}, children=[
         # text above the left-side block
-        html.H1("Interactive Visualization for Multi-task AL", style={'margin-left': '2%', 'margin-right': '2%'}),    
+        html.H1("Interactive Visualization for Multi-Task AL", style={'margin-left': '2%', 'margin-right': '2%'}),    
         html.Div(className='left-side', style={
                 'width': '90%', 
                 'height':'575px',
@@ -208,10 +209,10 @@ app.layout = html.Div([
                 'backgroundColor': '#f9f9f9',
                 'padding': '10px'
             }, children=[
-            html.H2("Data visualization"),
+            html.H2("Data Visualization:"),
             dbc.Col(dcc.Graph(id='main-vis', figure=fig)),
             html.Div([
-                html.Button('Download csv', id='download-btn'),
+                html.Button('Download CSV', id='download-btn'),
                 dcc.Download(id='download-dataframe-csv'),
             ]),
         ]),
@@ -222,7 +223,7 @@ app.layout = html.Div([
         html.Div(style={'width': '100%', 'float': 'left', 'margin-left': '1%', 'margin-right': '1%'}, children=[
             # PCP plot
             html.Div(className='top-right', children=[
-                html.H3("Data Attributes"),
+                html.H2("Data Attributes:"),
                 dcc.Graph(id='pcp-vis', figure=pcp),
             ], style={
                 'height':'200px',
@@ -254,7 +255,7 @@ app.layout = html.Div([
                     'margin-bottom': '1%',
                     'padding': '5px',
                 }, children=[
-                    html.H3("Controls"),
+                    html.H2("Controls:"),
                     html.Div(children=[
                         html.Label('Danceability:', style={'font-weight': 'bold', 'font-size':'13px'}),
                         dcc.Slider(min=0, max=1, value=0.5, 
@@ -285,7 +286,7 @@ app.layout = html.Div([
                     'margin-bottom': '1%',
                     'padding': '5px',
                 }, children=[
-                    html.H3("Labeling distribution"),
+                    html.H2("Labeling Distribution:"),
                     html.Div(children=[
                         dcc.Graph(id='acc-vis', figure=fig2), 
                     ]), 
