@@ -1,11 +1,11 @@
-from dash import Dash, html, dcc, callback, Output, Input, ctx, State, no_update
+from dash import Dash, html, dcc, callback, Output, Input, ctx, State, no_update, ALL
 import dash_bootstrap_components as dbc
 
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
+from sklearn.preprocessing import OneHotEncoder, MinMaxScaler, normalize
 from sklearn.metrics import pairwise_distances
 from sklearn.linear_model import Ridge
 from sklearn.utils.validation import check_is_fitted
@@ -24,6 +24,9 @@ import seaborn as sns
 import random
 
 from functions import *
+
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # load dataset, select only a subset 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
@@ -94,13 +97,20 @@ for comm_idx in range(n_comm):
 lands = random.sample(range(0,X.to_numpy().shape[0],1),int(X.to_numpy().shape[0]**0.5))
 lands = np.array(lands,dtype=int)
 
+# normalize X
+X_norm = normalize(X.to_numpy()[:,:5], axis=0, norm='l1')
+
 # create dimensionality reduction
-dm1 = pairwise_distances(X.to_numpy()[:,:5], X.to_numpy()[:,:5][lands], metric='cosine', n_jobs=-1)
+dm1 = pairwise_distances(X_norm, X_norm[lands], metric='cosine', n_jobs=-1)
 jaccard_distances = pdist(X.to_numpy()[:,5:], metric='jaccard')
 dm2 = squareform(jaccard_distances)[lands]
 
+# normalize the dm's
+dm1_norm = dm1 / np.max(dm1)
+dm2_norm = dm2 / np.max(dm2)
+
 # create dimensionality matrix for the numerical + categorical features
-dm = 0.06 * dm1 + 0.04 * dm2.T
+dm = 0.15 * dm1_norm + 0.15 * dm2_norm.T
 
 # create dimensionality matrix for the prediction features
 dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
@@ -146,8 +156,11 @@ def format_string(string):
         elif line.startswith("Track:"):
             track = line.split("Track: ")[1].strip()
 
+    danceability = df[(df['artist_name'] == artist) & (df['track_name'] == track)]['danceability'].values[0]
+    energy = df[(df['artist_name'] == artist) & (df['track_name'] == track)]['energy'].values[0]
+
     # construct the formatted string
-    formatted_string = f"{track.title()} by {artist.title()}"
+    formatted_string = f"{track.title()} by {artist.title()}, [{round(danceability, 2)}, {round(energy, 2)}]"
     
     return formatted_string
 
@@ -704,9 +717,10 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
     State('pcp-store', 'data'),    
     State('query-store', 'data'),
     Input('checklist-output', 'children'),
+    Input({'type': 'data-checklist', 'label': ALL}, 'value'),
     prevent_initial_call='initial_duplicate'
 )
-def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, current_children):
+def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, current_children, check_values):
     MT = np.zeros(len(data.columns))
     df_pcp = pd.DataFrame([MT], columns=data.columns)
     pcp = create_pcp(df_pcp)
@@ -740,13 +754,14 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
                 pcp_df = pcp_df.to_dict('records')
             return new_children, pcp, pcp_df, reset_bool, labeled_idx, None
         else:
+            # if item is unchecked, remove from pcp plot, but keep in checklist
             pcp_df = pd.DataFrame(columns=data.columns)
-            selected_labels = [item['props']['options'][0]['value'] for item in new_children]
-            for i in selected_labels:
-                artist, track, rl = string_to_var(i)
-                row = data[(data['artist'] == artist) & (data['track'] == track)]
-                pcp_df = pd.concat([pcp_df, row])
-                pcp = create_pcp(pcp_df)
+            for i in check_values:
+                if i:
+                    artist, track, rl = string_to_var(i[0])
+                    row = data[(data['artist'] == artist) & (data['track'] == track)]
+                    pcp_df = pd.concat([pcp_df, row])
+                    pcp = create_pcp(pcp_df)
             return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
 
     # find and initialize the samples
@@ -818,11 +833,22 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
         result = diff_rows
 
     pcp_df = result
+    pcp_df = pcp_df.drop_duplicates(subset=COMMON_FEATURES, ignore_index=True, keep='first').copy()
+
+    dataframe = pd.DataFrame(columns = pcp_df.columns)
+    for item in new_children:
+        artist, track, rl = None, None, None
+        if isinstance(item, dict):
+            artist, track, rl = string_to_var(item.get('props', {})['options'][0].get('value'))
+        elif isinstance(item, dcc.Checklist):
+            artist, track, rl = string_to_var(item.value[0])
+        for index, row in pcp_df.iterrows():
+            if row['track'] == track and row['artist'] == artist:
+                dataframe = pd.concat([dataframe, pd.DataFrame([row])], ignore_index=True)
 
     # create a new pcp with the resulting df
-    new_pcp = create_pcp(pcp_df)
-
-    return new_children, new_pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
+    new_pcp = create_pcp(dataframe)
+    return new_children, new_pcp, dataframe.to_dict('records'), reset_bool, labeled_idx, None
 
 # callback to download a csv with the original data and the new model predictions
 @callback(
@@ -830,7 +856,7 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
     Input("download-btn", "n_clicks"),
     prevent_initial_call=True,
 )
-def func(n_clicks):
+def download_csv(n_clicks):
     # check if the AL models are fitted
     model_fitted = True
     for idx, committee in enumerate(comm_list):

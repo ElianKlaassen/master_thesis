@@ -96,15 +96,24 @@ def get_pred_dm(X, comm_list, n_comm, lands):
         result = np.array(preds).T
     else:
         result = np.full((X.shape[0], 3), 0.5)
+
+    mult_matrix = [0.15, 0.15, 0.7]
+    weighted_result = result * mult_matrix
         
     # create dimensionality matrix
-    dm = pairwise_distances(result, result[lands], metric='cosine', n_jobs=-1)
+    dm = pairwise_distances(weighted_result, weighted_result[lands], metric='cosine', n_jobs=-1)
+
+    if np.max(dm) == 0:
+        return dm
     
-    return dm
+    dm_norm = dm / np.max(dm)
+    
+    return dm_norm
 
 # get the dimensions for the combination of distance matrices
 def get_dm_coords(dm, dm_pred, lands):
-    dm_copy = dm + 0.9 * dm_pred
+    dm_copy = dm + 0.7 * dm_pred
+    dm_copy = dm_copy / np.max(dm_copy)
     xl_2 = landmark_MDS(dm_copy.T,lands,2)
     return xl_2[:,0], xl_2[:,1]
 
