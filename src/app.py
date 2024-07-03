@@ -285,7 +285,7 @@ app.layout = html.Div([
                                 marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}, 
                                 id='pref-slider')
                     ]),
-                    html.Div(id='checklist-output', style={"minHeight": "150px", "maxHeight": "150px", "overflow-y": "scroll"}),
+                    html.Div(id='checklist-output', style={"minHeight": "175px", "maxHeight": "175px", "overflow-y": "scroll"}),
                     html.Button('Train the model!', id='train-btn', n_clicks=0, style={'margin':'1px'}), 
                     html.Button('Remove selected items', id='remove-btn', n_clicks=0, style={'margin':'1px'}),
                 ]),
