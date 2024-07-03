@@ -205,10 +205,11 @@ app.layout = html.Div([
     # container for the title and the left-side block
     html.Div(style={'width': '100%', 'float': 'left', 'margin-left': '2%'}, children=[
         # text above the left-side block
-        html.H1("Interactive Visualization for Multi-Task AL", style={'margin-left': '2%', 'margin-right': '2%'}),    
+        html.H1("Interactive Visualization for Multi-Task AL", style={'margin-left': '2%', 'margin-right': '2%'}),  
+        html.Div(id='live-update-text', style={'margin-left': '2%', 'margin-right': '2%', 'margin-bottom': '2%'}),  
         html.Div(className='left-side', style={
                 'width': '90%', 
-                'height':'575px',
+                'height':'549px',
                 'margin-left':'1%', 
                 'margin-right': '1%', 
                 'margin-bottom': '1%',
@@ -225,7 +226,6 @@ app.layout = html.Div([
                 html.Button('Download CSV', id='download-btn'),
                 dcc.Download(id='download-dataframe-csv'),
             ]),
-            html.Div(id='live-update-text'),
         ]),
     ]),
 
@@ -250,7 +250,7 @@ app.layout = html.Div([
 
             # slider, checkboxes, and button
             html.Div(className='bottom-right', style={
-                'height':'425px',
+                'height':'450px',
                 'margin-left':'1%', 
                 'margin-right': '1%',
                 'border': '1px solid black', 
@@ -324,14 +324,14 @@ app.layout = html.Div([
 def update_count(count):
     data = remove_none_values(performance_history)
     num = np.array(data).shape[1]
-    link = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+    link = 'https://www.youtube.com/'
 
     sentence = [
-        'Here I need to place some introductionary text. Perhaps also have a ',
-        html.A("link", href=link, target="_blank"), 
-        ' to a tutorial video. Eventually I will tell you that you have labeled: ', 
+        'Welcome to my dashboard. For an explanatory video, please watch the introduction video ', 
+        html.A("here", href=link, target="_blank"), 
+        '. Right now, you have labeled:  ',
         html.Span(f'{num - 2} '),
-        ' item(s) thus far. Good job!',
+        ' item(s). Excellent job!',
     ]
 
     return sentence
