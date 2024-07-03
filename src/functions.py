@@ -519,7 +519,9 @@ def plot_selection_bar_chart(data, n_comm, comm_list, TRAIN_FEATURES, X_pool):
         marker=dict(
             color=preds_data,
             colorscale=blue_color_scale,  # use the custom blue color scale
-            size=5
+            size=5,
+            cmin=0,            # set the minimum value for the colorscale
+            cmax=1,             # set the maximum value for the colorscale
         ),
         showlegend=False,
         )

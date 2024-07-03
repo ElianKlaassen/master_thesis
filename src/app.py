@@ -399,7 +399,9 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
         marker=dict(
             color=preds_data,
             colorscale=blue_color_scale,  # use the custom blue color scale
-            size=5
+            size=5,
+            cmin=0,            # set the minimum value for the colorscale
+            cmax=1,             # set the maximum value for the colorscale
         ),
         showlegend=False,
         )
