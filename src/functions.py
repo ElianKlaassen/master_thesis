@@ -97,18 +97,24 @@ def get_pred_dm(X, comm_list, n_comm, lands):
     else:
         result = np.full((X.shape[0], 3), 0.5)
 
-    mult_matrix = [0.15, 0.15, 0.7]
-    weighted_result = result * mult_matrix
-        
-    # create dimensionality matrix
-    dm = pairwise_distances(weighted_result, weighted_result[lands], metric='cosine', n_jobs=-1)
+    dm_danc = pairwise_distances(result[:,:1], result[:,:1][lands], metric='euclidean', n_jobs=-1)
+    dm_ener = pairwise_distances(result[:,1:2], result[:,1:2][lands], metric='euclidean', n_jobs=-1)
+    dm_pref = pairwise_distances(result[:,2:], result[:,2:][lands], metric='euclidean', n_jobs=-1)
 
-    if np.max(dm) == 0:
-        return dm
+    if np.max(dm_danc) == 0 and np.max(dm_ener) == 0 and np.max(dm_pref) == 0:
+        return pairwise_distances(result, result[lands], metric='cosine', n_jobs=-1)
+
+    if np.max(dm_danc) != 0:
+        dm_danc = dm_danc / np.max(dm_danc)
+    if np.max(dm_ener) != 0:
+        dm_ener = dm_ener / np.max(dm_ener)
+    if np.max(dm_pref) != 0:
+        dm_pref = dm_pref / np.max(dm_pref)
+
+    dm = 0.15*dm_danc + 0.15 * dm_ener + 0.70 * dm_pref   
+    # dm_norm = dm / np.max(dm)
     
-    dm_norm = dm / np.max(dm)
-    
-    return dm_norm
+    return dm
 
 # get the dimensions for the combination of distance matrices
 def get_dm_coords(dm, dm_pred, lands):
@@ -375,11 +381,11 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
 
     # function to determine the corner based on the scatter point location
     def get_corner(x, y):
-        if x < x_mid and y >= y_mid:
+        if x < 0 and y >= 0:
             return 'top-left'
-        elif x >= x_mid and y >= y_mid:
+        elif x >= 0 and y >= 0:
             return 'top-right'
-        elif x < x_mid and y < y_mid:
+        elif x < 0 and y < 0:
             return 'bottom-left'
         else:
             return 'bottom-right'
@@ -447,7 +453,174 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
         )
 
         # determine line start and end based on glyph position and scatter position
-        if glyph_y >= y_mid:  # glyph in bottom half
+        if glyph_y >= 0:  # glyph in bottom half
+            line_y_start = y
+            line_y_end = (glyph_y - box_height / 2) + 0.5*scale_factor
+        else:  # glyph in top half
+            line_y_start = y
+            line_y_end = (glyph_y + box_height / 2) + 0.5*scale_factor
+
+        # add trace for the line connecting scatter to glyph
+        fig.add_trace(
+            go.Scatter(
+                x=[x, glyph_x],
+                y=[line_y_start, line_y_end],
+                mode='lines',
+                line=dict(width=0.5, color='black'),
+                showlegend=False,
+                hoverinfo='none'
+            )
+        )
+        
+    return fig
+
+# function to create bar chart glyphs
+def plot_selection_bar_chart(data, n_comm, comm_list, TRAIN_FEATURES, X_pool):
+    data_copy = data.copy()
+
+    # retrieve the data
+    x_data = data_copy['x_coor']
+    y_data = data_copy['y_coor']
+    artist_data = data_copy['artist']
+    track_data = data_copy['track']
+    release_date_data = data_copy['release_date']
+
+    # check if the AL models are fitted
+    model_fitted = True
+    for idx, committee in enumerate(comm_list):
+        if not are_all_learners_fitted(committee):
+            model_fitted = False
+
+    preds = [1 for i in range(len(data))]
+
+    index = data.index.tolist()
+
+    # if model is fitted, get preference prediction
+    if model_fitted:
+        preds = comm_list[2].predict(X_pool[index])
+
+    data_copy['preds'] = preds
+    preds_data = data_copy['preds']
+
+    blue_color_scale = [
+        [0, '#add8e6'],  # light blue
+        [1, '#00008b']   # dark blue
+    ]
+
+    fig = go.Figure()
+
+    # create an initial scatter plot
+    scatter_trace = go.Scatter(
+        x=x_data,
+        y=y_data,
+        mode='markers',
+        hoverinfo='text',
+        text=[f'Artist: {a}<br>Track: {t}<br>Release Date: {d}' for a, t, d in zip(artist_data, track_data, release_date_data)],
+        marker=dict(
+            color=preds_data,
+            colorscale=blue_color_scale,  # use the custom blue color scale
+            size=5
+        ),
+        showlegend=False,
+        )
+    
+    fig.add_trace(scatter_trace)
+
+    # scaling factor to increase the size of the glyphs
+    scale_factor = 0.05
+
+    offset_value = 0.1
+
+    # define the offsets for the corners within each region
+    offsets = {
+        'top-left': (-offset_value, offset_value),
+        'top-right': (offset_value, offset_value),
+        'bottom-left': (-offset_value, -offset_value),
+        'bottom-right': (offset_value, -offset_value)
+    }
+
+    # determine the plot range (assuming default Plotly behavior if not specified)
+    x_range = [data['x_coor'].min(), data['x_coor'].max()]
+    y_range = [data['y_coor'].min(), data['y_coor'].max()]
+
+    x_mid = (x_range[0] + x_range[1]) / 2
+    y_mid = (y_range[0] + y_range[1]) / 2
+
+    # function to determine the corner based on the scatter point location
+    def get_corner(x, y):
+        if x < 0 and y >= 0:
+            return 'top-left'
+        elif x >= 0 and y >= 0:
+            return 'top-right'
+        elif x < 0 and y < 0:
+            return 'bottom-left'
+        else:
+            return 'bottom-right'
+
+    # add traces for each bar chart glyph
+    for i, row in data.iterrows():
+        x = row['x_coor']
+        y = row['y_coor']
+        values = [0 for _ in range(n_comm)]
+
+        for comm_idx in range(n_comm):
+            values[comm_idx] = comm_list[comm_idx].predict([row[TRAIN_FEATURES].tolist()])[0]
+
+        num_variables = len(values)
+        bar_width = 0.5 * scale_factor  # width of each bar, scaled for larger glyphs
+        bar_spacing = 0.05 * scale_factor  # reduced spacing between bars
+        colors = ['#b2df8a', '#33a02c', '#fb9a99']
+
+        # get the corner for the current scatter point
+        corner = get_corner(x, y)
+        offset_x, offset_y = offsets[corner]
+
+        # calculate the new position for the glyph
+        glyph_x = x + offset_x
+        glyph_y = y + offset_y
+
+        # calculate x coordinates for the bars
+        x_bars = np.linspace(-num_variables * (bar_width + bar_spacing) / 2 + bar_width / 2, 
+                             num_variables * (bar_width + bar_spacing) / 2 - bar_width / 2, 
+                             num_variables) + glyph_x
+        
+        # add bars as individual traces
+        for j in range(num_variables):
+            fig.add_trace(
+                go.Bar(
+                    x=[x_bars[j]],
+                    y=[values[j] * scale_factor],  # scale bar height
+                    width=[bar_width],
+                    marker_color=colors[j],
+                    base=glyph_y,
+                    showlegend=False,
+                    hoverinfo='none'  # remove text inside bars
+                )
+            )
+
+        # calculate coordinates for the square box
+        box_height = 1 * scale_factor  # maximum height of the box, scaled
+        total_width = num_variables * (bar_width + bar_spacing)  # total width of all bars plus spacing
+        box_x = [glyph_x - total_width / 2, glyph_x + total_width / 2, glyph_x + total_width / 2, glyph_x - total_width / 2, glyph_x - total_width / 2]
+        box_y = [glyph_y, glyph_y, glyph_y + box_height, glyph_y + box_height, glyph_y]    
+
+        # add trace for the square box
+        fig.add_trace(
+            go.Scatter(
+                x=box_x,
+                y=box_y,
+                mode='lines',
+                fill='toself', 
+                fillcolor='rgba(0,0,0,0)', 
+                line=dict(width=0.5, color='black'),  # black box line
+                showlegend=False,
+                hoverinfo='text',
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
+            )
+        )
+
+        # determine line start and end based on glyph position and scatter position
+        if glyph_y >= 0:  # glyph in bottom half
             line_y_start = y
             line_y_end = (glyph_y - box_height / 2) + 0.5*scale_factor
         else:  # glyph in top half

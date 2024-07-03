@@ -97,11 +97,8 @@ for comm_idx in range(n_comm):
 lands = random.sample(range(0,X.to_numpy().shape[0],1),int(X.to_numpy().shape[0]**0.5))
 lands = np.array(lands,dtype=int)
 
-# normalize X
-X_norm = normalize(X.to_numpy()[:,:5], axis=0, norm='l1')
-
 # create dimensionality reduction
-dm1 = pairwise_distances(X_norm, X_norm[lands], metric='cosine', n_jobs=-1)
+dm1 = pairwise_distances(X.to_numpy()[:,:5], X.to_numpy()[:,:5][lands], metric='cosine', n_jobs=-1)
 jaccard_distances = pdist(X.to_numpy()[:,5:], metric='jaccard')
 dm2 = squareform(jaccard_distances)[lands]
 
@@ -228,6 +225,7 @@ app.layout = html.Div([
                 html.Button('Download CSV', id='download-btn'),
                 dcc.Download(id='download-dataframe-csv'),
             ]),
+            html.Div(id='live-update-text'),
         ]),
     ]),
 
@@ -319,6 +317,24 @@ app.layout = html.Div([
     dcc.Store(id='iteration-count', data=iteration_count),
 ], style={"display": "flex", "flexDirection": "row", "justifyContent": "space-between", "alignItems": "flex-start", "padding": "20px"})
 
+@app.callback(
+    Output('live-update-text', 'children'),
+    Input('iteration-count', 'data'),
+)
+def update_count(count):
+    data = remove_none_values(performance_history)
+    num = np.array(data).shape[1]
+    link = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+
+    sentence = [
+        'Here I need to place some introductionary text. Perhaps also have a ',
+        html.A("link", href=link, target="_blank"), 
+        ' to a tutorial video. Eventually I will tell you that you have labeled: ', 
+        html.Span(f'{num - 2} '),
+        ' item(s) thus far. Good job!',
+    ]
+
+    return sentence
 
 # callback to update the scatters in the main visualization
 @app.callback(
@@ -446,19 +462,39 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
                     index = fig.data[1]['text'].index(i)
                     indices_2.append(index)
 
+    df_bc = pd.DataFrame(columns=data.columns)
+
     # select the labels in the plot
     if indices:
         for i, trace in enumerate(fig.data):
             if i == 0:
                 trace.selectedpoints = indices
+                for x in indices:
+                    item = trace['text'][x]
+                    artist, track, rl = string_to_var(item)
+                    if artist not in data.iloc[query_idx]['artist'].values and track not in data.iloc[query_idx]['track'].values:
+                        row = data[(data['artist'] == artist) & (data['track'] == track)]
+                        df_bc = pd.concat([df_bc, row])
     if indices_2:
         for i, trace in enumerate(fig.data):
             if i == 1:
                 trace.selectedpoints = indices_2
+                for x in indices_2:
+                    item = trace['text'][x]
+                    artist, track, rl = string_to_var(item)
+                    if artist not in data.iloc[query_idx]['artist'].values and track not in data.iloc[query_idx]['track'].values:
+                        row = data[(data['artist'] == artist) & (data['track'] == track)]
+                        df_bc = pd.concat([df_bc, row])
     elif indices and not indices_2:
         for i, trace in enumerate(fig.data):
             if i == 1:
                 trace.selectedpoints = []
+
+    if model_fitted:
+        if not df_bc.empty:
+            bc_fig = plot_selection_bar_chart(df_bc, n_comm, comm_list, TRAIN_FEATURES, X_pool)
+            for trace in bc_fig.data:
+                fig.add_trace(trace, secondary_y=True)
 
     # combine layers
     fig.update_layout(
@@ -765,34 +801,8 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
             return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
 
     # find and initialize the samples
-    artist, track, release_date, sample = None, None, None, None
-    if click_data['points'][0]['curveNumber'] == 0:
-        sample = click_data['points'][0]['text']
-        artist, track, release_date = string_to_var(sample)
-
-    elif click_data['points'][0]['curveNumber'] == 1:
-        id = click_data['points'][0]['pointIndex']
-        queried = labeled_idx[id]
-        artist = data.iloc[queried]['artist']
-        track = data.iloc[queried]['track']
-        release_date = data.iloc[queried]['release_date']
-        sample = var_to_string(artist, track, release_date)
-
-    elif click_data['points'][0]['curveNumber'] == 2:
-        id = click_data['points'][0]['pointNumber']
-        queried = query_idx[id]
-        artist = data.iloc[queried]['artist']
-        track = data.iloc[queried]['track']
-        release_date = data.iloc[queried]['release_date']
-        sample = var_to_string(artist, track, release_date)
-
-    elif click_data['points'][0]['curveNumber'] > 2:
-        id = (click_data['points'][0]['curveNumber'] - 5) // 5
-        queried = query_idx[id]
-        artist = data.iloc[queried]['artist']
-        track = data.iloc[queried]['track']
-        release_date = data.iloc[queried]['release_date']
-        sample = var_to_string(artist, track, release_date)
+    sample = click_data['points'][0]['text']
+    artist, track, release_date = string_to_var(sample)        
 
     # create a dataframe for all the clicked samples
     vis_df = data[(data['artist'].isin([artist])) & (data['track'].isin([track]))]
