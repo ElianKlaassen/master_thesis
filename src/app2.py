@@ -64,11 +64,6 @@ Y = df[['danceability', 'energy', 'preference']]
 X = one_hot_encode(X, 'Genre')
 X = one_hot_encode(X, 'Topic')
 
-# number of training iterations
-iteration_count = 0
-# number of iteration before reset
-iteration_reset = 2
-
 # initializing Committee members
 n_comm = 3
 comm_list = list()
@@ -107,13 +102,14 @@ dm1_norm = dm1 / np.max(dm1)
 dm2_norm = dm2 / np.max(dm2)
 
 # create dimensionality matrix for the numerical + categorical features
-dm = 0.15 * dm1_norm + 0.15 * dm2_norm.T
+dm = 0.5 * dm1_norm + 0.5 * dm2_norm.T
 
-# create dimensionality matrix for the prediction features
-dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
+def get_dm_coords(dm, lands):
+    xl_2 = landmark_MDS(dm.T,lands,2)
+    return xl_2[:,0], xl_2[:,1]
 
 # get 2d coordinates from the dimensionality matrices
-X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
+X_dm, y_dm = get_dm_coords(dm, lands)
 
 # create new dataframe
 data = X.copy()
@@ -350,10 +346,9 @@ def update_count(count):
     State('checklist-output', 'children'),
     State('main-vis', 'relayoutData'),
     Input('reset-bool', 'data'),
-    State('iteration-count', 'data'),
     prevent_initial_call='initial_duplicate'
 )
-def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_bool, iteration_count):
+def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_bool):
     blue_color_scale = [
         [0, '#add8e6'],  # light blue
         [1, '#00008b']   # dark blue
@@ -373,12 +368,6 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
 
     # if the training button is pressed
     if reset_bool:
-        # and the number of iterations is divible by a set amount
-        if iteration_count % iteration_reset == 0:
-            # recalculate dimensionality coordinates
-            dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
-            X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
-            data['x_coor'], data['y_coor'] = X_dm, y_dm
         reset_bool = False
 
     data_copy = data.copy()
@@ -746,6 +735,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
 
     return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
 
+
 # callback for the labeling interface
 @app.callback(
     Output('checklist-output', 'children', allow_duplicate=True),
@@ -807,14 +797,16 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
                     pcp_df = pd.concat([pcp_df, row])
                     pcp = create_pcp(pcp_df)
             return new_children, pcp, pcp_df.to_dict('records'), reset_bool, labeled_idx, None
+        
+    print('CLICK', click_data)
 
     # find and initialize the samples
-    sample, artist, track, release_date = None, None, None, None
+    sample = None
     if click_data['points'][0].get('text'):
         sample = click_data['points'][0]['text']
-        artist, track, release_date = string_to_var(sample) 
     else:
         id = (click_data['points'][0]['curveNumber'] - 5) // 5
+        print('ID', id)
         if id < 5:
             queried = query_idx[id]
         else: 
@@ -822,7 +814,8 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
         artist = data.iloc[queried]['artist']
         track = data.iloc[queried]['track']
         release_date = data.iloc[queried]['release_date']
-        sample = var_to_string(artist, track, release_date)       
+        sample = var_to_string(artist, track, release_date)
+    artist, track, release_date = string_to_var(sample)        
 
     # create a dataframe for all the clicked samples
     vis_df = data[(data['artist'].isin([artist])) & (data['track'].isin([track]))]

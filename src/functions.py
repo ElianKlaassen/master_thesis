@@ -111,9 +111,7 @@ def get_pred_dm(X, comm_list, n_comm, lands):
     if np.max(dm_pref) != 0:
         dm_pref = dm_pref / np.max(dm_pref)
 
-    dm = 0.15*dm_danc + 0.15 * dm_ener + 0.70 * dm_pref   
-    # dm_norm = dm / np.max(dm)
-    
+    dm = 0.15*dm_danc + 0.15 * dm_ener + 0.70 * dm_pref
     return dm
 
 # get the dimensions for the combination of distance matrices
@@ -427,7 +425,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
                     marker_color=colors[j],
                     base=glyph_y,
                     showlegend=False,
-                    hoverinfo='none'  # remove text inside bars
+                    hoverinfo='none',
                 )
             )
 
@@ -468,7 +466,8 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
                 mode='lines',
                 line=dict(width=0.5, color='black'),
                 showlegend=False,
-                hoverinfo='none'
+                hoverinfo='text',
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
             )
         )
         
@@ -596,7 +595,7 @@ def plot_selection_bar_chart(data, n_comm, comm_list, TRAIN_FEATURES, X_pool):
                     marker_color=colors[j],
                     base=glyph_y,
                     showlegend=False,
-                    hoverinfo='none'  # remove text inside bars
+                    hoverinfo='none',
                 )
             )
 
@@ -637,7 +636,8 @@ def plot_selection_bar_chart(data, n_comm, comm_list, TRAIN_FEATURES, X_pool):
                 mode='lines',
                 line=dict(width=0.5, color='black'),
                 showlegend=False,
-                hoverinfo='none'
+                hoverinfo='text',
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
             )
         )
         
