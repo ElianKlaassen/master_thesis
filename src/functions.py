@@ -160,7 +160,7 @@ def create_density_plot(perf_hist):
     fig.update_yaxes(visible=False, showticklabels=False)
     
     # define the custom tick labels
-    custom_ticks = {0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}
+    custom_ticks = {0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'}
 
     # update the x-axis with custom tick labels
     fig.update_xaxes(
@@ -273,7 +273,7 @@ def add_custom_legend(fig):
 
 # initialize pcp attributes
 bins = [-0.1, 0.2, 0.4, 0.6, 0.8, 1]
-labels = ['Very Bad', 'Bad', 'Neutral', 'Good', 'Very Good']
+labels = ['Very Low', 'Low', 'Neutral', 'High', 'Very High']
 rl_labels = ['Very Old', 'Old', 'Neutral', 'New', 'Very New']
 
 # create a parallel categories plot
@@ -338,7 +338,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
     y_data = data['y_coor']
     artist_data = data['artist']
     track_data = data['track']
-    release_date_data = data['release_date']
+    release_date_data = data['rl_date']
 
     fig = go.Figure()
 
@@ -446,7 +446,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
                 line=dict(width=0.5, color='black'),  # black box line
                 showlegend=False,
                 hoverinfo='text',
-                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['rl_date']}"
             )
         )
 
@@ -467,7 +467,7 @@ def plot_bar_chart_glyphs_from_dataframe(data, n_comm, comm_list, TRAIN_FEATURES
                 line=dict(width=0.5, color='black'),
                 showlegend=False,
                 hoverinfo='text',
-                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['rl_date']}"
             )
         )
         
@@ -482,7 +482,7 @@ def plot_selection_bar_chart(data, n_comm, comm_list, TRAIN_FEATURES, X_pool):
     y_data = data_copy['y_coor']
     artist_data = data_copy['artist']
     track_data = data_copy['track']
-    release_date_data = data_copy['release_date']
+    release_date_data = data_copy['rl_date']
 
     # check if the AL models are fitted
     model_fitted = True
@@ -616,7 +616,7 @@ def plot_selection_bar_chart(data, n_comm, comm_list, TRAIN_FEATURES, X_pool):
                 line=dict(width=0.5, color='black'),  # black box line
                 showlegend=False,
                 hoverinfo='text',
-                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['rl_date']}"
             )
         )
 
@@ -637,7 +637,7 @@ def plot_selection_bar_chart(data, n_comm, comm_list, TRAIN_FEATURES, X_pool):
                 line=dict(width=0.5, color='black'),
                 showlegend=False,
                 hoverinfo='text',
-                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['release_date']}"
+                text=f"Artist: {row['artist']}<br>Track: {row['track']}<br>Release Date: {row['rl_date']}"
             )
         )
         

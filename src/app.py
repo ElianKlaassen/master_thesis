@@ -31,6 +31,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # load dataset, select only a subset 
 df = pd.read_csv("src/data/tcc_ceds_music.csv")
 df = df[df['release_date'] >= 1999]
+df['release_date2'] = df['release_date'].copy()
 df = df.rename(columns={"genre": "Genre", "topic": "Topic"})
 
 # normalize the release date
@@ -50,7 +51,7 @@ COMMON_FEATURES = ['release_date', 'loudness', 'acousticness', 'instrumentalness
 
 # initialize pcp attributes
 bins = [-0.1, 0.2, 0.4, 0.6, 0.8, 1]
-labels = ['Very Bad', 'Bad', 'Neutral', 'Good', 'Very Good']
+labels = ['Very Low', 'Low', 'Neutral', 'High', 'Very High']
 rl_labels = ['Very Old', 'Old', 'Neutral', 'New', 'Very New']
 
 # remove duplicates
@@ -67,7 +68,7 @@ X = one_hot_encode(X, 'Topic')
 # number of training iterations
 iteration_count = 0
 # number of iteration before reset
-iteration_reset = 2
+iteration_reset = 3
 
 # initializing Committee members
 n_comm = 3
@@ -121,6 +122,7 @@ data['x_coor'], data['y_coor'] = X_dm, y_dm
 data['artist'], data['track'] = df[['artist_name']], df[['track_name']]
 data['Genre'], data['Topic'] = df['Genre'], df['Topic']
 data['manual_dance'], data['manual_ener'], data['manual_pref'] = -1, -1, -1
+data['rl_date'] = df['release_date2'].copy()
 
 # create training dataset
 train = pd.concat([X, Y], axis=1)
@@ -192,7 +194,7 @@ fig = px.scatter(data, x='x_coor', y='y_coor',
                                             'y_coor':False,
                                             'artist':True,
                                             'track':True,
-                                            'release_date':True,
+                                            'rl_date':True,
                                             })
 fig = add_custom_legend(fig)
 fig.update_layout(clickmode='event+select', margin=dict(l=20, r=20, t=20, b=20),)
@@ -273,19 +275,19 @@ app.layout = html.Div([
                     html.Div(children=[
                         html.Label('Danceability:', style={'font-weight': 'bold', 'font-size':'13px'}),
                         dcc.Slider(min=0, max=1, value=0.5, 
-                                marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}, 
+                                marks={0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'}, 
                                 id='dance-slider')
                     ]),
                     html.Div(children=[
                         html.Label('Energy:', style={'font-weight': 'bold', 'font-size':'13px'}),
                         dcc.Slider(min=0, max=1, value=0.5, 
-                                marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'},
+                                marks={0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'},
                                 id='energy-slider')
                     ]),
                     html.Div(children=[
                         html.Label('Preference:', style={'font-weight': 'bold', 'font-size':'13px'}),
                         dcc.Slider(min=0, max=1, value=0.5, 
-                                marks={0: 'Very Bad', 0.25: 'Bad', 0.5: 'Neutral', 0.75: 'Good', 1: 'Very Good'}, 
+                                marks={0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'}, 
                                 id='pref-slider')
                     ]),
                     html.Div(id='checklist-output', style={"minHeight": "175px", "maxHeight": "175px", "overflow-y": "scroll"}),
@@ -328,7 +330,7 @@ app.layout = html.Div([
 def update_count(count):
     data = remove_none_values(performance_history)
     num = np.array(data).shape[1]
-    link = 'https://www.youtube.com/'
+    link = 'https://youtu.be/svw0EhUd8gs'
 
     sentence = [
         'Welcome to my dashboard. For an explanatory video, please watch the introduction video ', 
@@ -390,7 +392,7 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
     y_data = data_copy[~data_copy.index.isin(labeled_idx)]['y_coor']
     artist_data = data_copy[~data_copy.index.isin(labeled_idx)]['artist']
     track_data = data_copy[~data_copy.index.isin(labeled_idx)]['track']
-    release_date_data = data_copy[~data_copy.index.isin(labeled_idx)]['release_date']
+    release_date_data = data_copy[~data_copy.index.isin(labeled_idx)]['rl_date']
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -420,7 +422,7 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
         y_data = data.iloc[label_idx]['y_coor']
         artist_data = data.iloc[label_idx]['artist']
         track_data = data.iloc[label_idx]['track']
-        release_date_data = data.iloc[label_idx]['release_date']
+        release_date_data = data.iloc[label_idx]['rl_date']
 
         # create the scatter plot for the already labeled data
         scatter_trace = go.Scatter(
