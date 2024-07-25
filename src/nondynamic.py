@@ -65,11 +65,6 @@ Y = df[['danceability', 'energy', 'preference']]
 X = one_hot_encode(X, 'Genre')
 X = one_hot_encode(X, 'Topic')
 
-# number of training iterations
-iteration_count = 0
-# number of iteration before reset
-iteration_reset = 3
-
 # initializing Committee members
 n_comm = 3
 comm_list = list()
@@ -77,7 +72,7 @@ query_idx = []
 labeled_idx = []
 # create a committee for each target
 for comm_idx in range(n_comm):
-    n_members = 3
+    n_members = 10
     learner_list = list()
     # add members to each committee
     for member_idx in range(n_members):
@@ -108,13 +103,14 @@ dm1_norm = dm1 / np.max(dm1)
 dm2_norm = dm2 / np.max(dm2)
 
 # create dimensionality matrix for the numerical + categorical features
-dm = 0.15 * dm1_norm + 0.15 * dm2_norm.T
+dm = 0.5 * dm1_norm + 0.5 * dm2_norm.T
 
-# create dimensionality matrix for the prediction features
-dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
+def get_dm_coords(dm, lands):
+    xl_2 = landmark_MDS(dm.T,lands,2)
+    return xl_2[:,0], xl_2[:,1]
 
 # get 2d coordinates from the dimensionality matrices
-X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
+X_dm, y_dm = get_dm_coords(dm, lands)
 
 # create new dataframe
 data = X.copy()
@@ -281,13 +277,13 @@ app.layout = html.Div([
                     html.Div(children=[
                         html.Label('Energy:', style={'font-weight': 'bold', 'font-size':'13px'}),
                         dcc.Slider(min=0, max=1, value=0.5, 
-                                marks={0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'},
+                                marks={0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'}, 
                                 id='energy-slider')
                     ]),
                     html.Div(children=[
                         html.Label('Preference:', style={'font-weight': 'bold', 'font-size':'13px'}),
                         dcc.Slider(min=0, max=1, value=0.5, 
-                                marks={0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'}, 
+                                marks={0: 'Very Low', 0.25: 'Low', 0.5: 'Neutral', 0.75: 'High', 1: 'Very High'},  
                                 id='pref-slider')
                     ]),
                     html.Div(id='checklist-output', style={"minHeight": "175px", "maxHeight": "175px", "overflow-y": "scroll"}),
@@ -352,10 +348,9 @@ def update_count(count):
     State('checklist-output', 'children'),
     State('main-vis', 'relayoutData'),
     Input('reset-bool', 'data'),
-    State('iteration-count', 'data'),
     prevent_initial_call='initial_duplicate'
 )
-def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_bool, iteration_count):
+def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_bool):
     blue_color_scale = [
         [0, '#add8e6'],  # light blue
         [1, '#00008b']   # dark blue
@@ -375,12 +370,6 @@ def update_plot(query_idx, labeled_idx, current_children, relayout_data, reset_b
 
     # if the training button is pressed
     if reset_bool:
-        # and the number of iterations is divible by a set amount
-        if iteration_count % iteration_reset == 0:
-            # recalculate dimensionality coordinates
-            dm_pred = get_pred_dm(X, comm_list, n_comm, lands)
-            X_dm, y_dm = get_dm_coords(dm, dm_pred, lands)
-            data['x_coor'], data['y_coor'] = X_dm, y_dm
         reset_bool = False
 
     data_copy = data.copy()
@@ -647,19 +636,21 @@ def lasso_select(selected_data, current_children):
 def remove_items(btn2, current_children, pcp_df):
     if "remove-btn" == ctx.triggered_id:
         pcp_df = pd.DataFrame(pcp_df)
-        value = [item['props']['value'] for item in current_children]
-        
-        # remove all items that are checked from the dataframe
-        for i in value:
-            if i:
-                artist, track, rl = string_to_var(i[0])
-                pcp_df = pcp_df[(pcp_df.artist != artist) & (pcp_df.track != track)]
+        if current_children:
+            value = [item['props']['value'] for item in current_children]
+            
+            # remove all items that are checked from the dataframe
+            for i in value:
+                if i:
+                    artist, track, rl = string_to_var(i[0])
+                    pcp_df = pcp_df[(pcp_df.artist != artist) & (pcp_df.track != track)]
 
-        pcp = create_pcp(pcp_df)
+            if 'release_date' in pcp_df.columns:
+                pcp = create_pcp(pcp_df)
 
-        # keep only the children that are not checked
-        current_children = [i for i in current_children if not i['props']['value']]
-        return current_children, pcp, pcp_df.to_dict('records')
+                # keep only the children that are not checked
+                current_children = [i for i in current_children if not i['props']['value']]
+                return current_children, pcp, pcp_df.to_dict('records')
     
     return no_update
 
@@ -748,6 +739,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
 
     return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
 
+
 # callback for the labeling interface
 @app.callback(
     Output('checklist-output', 'children', allow_duplicate=True),
@@ -824,7 +816,7 @@ def handle_labeling(click_data, reset_bool, labeled_idx, pcp_df, query_idx, curr
         artist = data.iloc[queried]['artist']
         track = data.iloc[queried]['track']
         release_date = data.iloc[queried]['release_date']
-        sample = var_to_string(artist, track, release_date)       
+        sample = var_to_string(artist, track, release_date)         
 
     # create a dataframe for all the clicked samples
     vis_df = data[(data['artist'].isin([artist])) & (data['track'].isin([track]))]

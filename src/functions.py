@@ -111,7 +111,7 @@ def get_pred_dm(X, comm_list, n_comm, lands):
     if np.max(dm_pref) != 0:
         dm_pref = dm_pref / np.max(dm_pref)
 
-    dm = 0.15*dm_danc + 0.15 * dm_ener + 0.70 * dm_pref
+    dm = 0.1*dm_danc + 0.1 * dm_ener + 0.80 * dm_pref
     return dm
 
 # get the dimensions for the combination of distance matrices
@@ -156,6 +156,18 @@ def create_density_plot(perf_hist):
 
         # clear the seaborn plot
         sns_kde.clear()
+
+    # TODO: ask Fernando for thoughts about this line?
+    # # Add horizontal line at y = 1 to represent equal distribution
+    # fig.add_hline(y=1, line=dict(color='black'), name='Norm')
+
+    # # Adding a scatter trace to include the horizontal line in the legend
+    # fig.add_trace(go.Scatter(
+    #     x=[None], y=[None], mode='lines',
+    #     line=dict(color='black'),
+    #     showlegend=True,
+    #     name='Norm'
+    # ))
         
     fig.update_yaxes(visible=False, showticklabels=False)
     
