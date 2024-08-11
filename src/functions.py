@@ -300,7 +300,7 @@ def create_pcp(pcp_df, bins=bins, labels=labels, rl_labels=rl_labels):
     # specify height and width
     pcp.update_layout(
         height=150,
-        width=725,
+        width=825,
     )
 
     # remove margins around the plot
