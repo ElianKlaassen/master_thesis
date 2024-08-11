@@ -158,11 +158,8 @@ def format_string(string):
         elif line.startswith("Track:"):
             track = line.split("Track: ")[1].strip()
 
-    danceability = df[(df['artist_name'] == artist) & (df['track_name'] == track)]['danceability'].values[0]
-    energy = df[(df['artist_name'] == artist) & (df['track_name'] == track)]['energy'].values[0]
-
     # construct the formatted string
-    formatted_string = f"{track.title()} by {artist.title()}, [{round(danceability, 2)}, {round(energy, 2)}]"
+    formatted_string = f"{track.title()} by {artist.title()}"
     
     return formatted_string
 
@@ -330,7 +327,7 @@ app.layout = html.Div([
 def update_count(count):
     data = remove_none_values(performance_history)
     num = np.array(data).shape[1]
-    link = 'https://youtu.be/svw0EhUd8gs'
+    link = 'https://youtu.be/WJnbutGlBHc'
 
     sentence = [
         'Welcome to my dashboard. For an explanatory video, please watch the introduction video ', 
@@ -673,6 +670,9 @@ def remove_items(btn2, current_children, pcp_df):
     Output('query-store', 'data'), 
     Output('reset-bool', 'data', allow_duplicate=True),
     Output('iteration-count', 'data'),
+    Output('dance-slider', 'value'),
+    Output('energy-slider', 'value'),
+    Output('pref-slider', 'value'),
     Input('train-btn', 'n_clicks'),
     State('x_pool-store', 'data'),
     State('y_pool-store', 'data'),
@@ -696,7 +696,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
     y_pool_test = [danceability, energy, preference]
 
     if not df:
-        return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
+        return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count, 0.5, 0.5, 0.5
 
     # if the button is clicked, train the model
     if "train-btn" == ctx.triggered_id:
@@ -706,7 +706,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
                 reset_bool = True
 
         if not reset_bool:
-            return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
+            return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count, 0.5, 0.5, 0.5
 
         artist = pd.DataFrame(df)['artist'].tolist()
         track = pd.DataFrame(df)['track'].tolist()
@@ -748,7 +748,7 @@ def train_model(btn1, X_pool, y_pool, df, danceability, energy, preference, curr
 
         iteration_count = iteration_count + 1
 
-    return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count
+    return fig2, X_pool, y_pool, query_idx, reset_bool, iteration_count, 0.5, 0.5, 0.5
 
 # callback for the labeling interface
 @app.callback(
