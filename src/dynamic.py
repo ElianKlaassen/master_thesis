@@ -207,7 +207,7 @@ app.layout = html.Div([
     # container for the title and the left-side block
     html.Div(style={'width': '100%', 'float': 'left', 'margin-left': '2%'}, children=[
         # text above the left-side block
-        html.H1("Interactive Visualization for Multi-Task AL", style={'margin-left': '2%', 'margin-right': '2%'}),  
+        html.H1("Interactive Visualization for Multi-Target Active Learning", style={'margin-left': '2%', 'margin-right': '2%'}),  
         html.Div(id='live-update-text', style={'margin-left': '2%', 'margin-right': '2%', 'margin-bottom': '2%'}),  
         html.Div(className='left-side', style={
                 'width': '90%', 
@@ -327,7 +327,7 @@ app.layout = html.Div([
 def update_count(count):
     data = remove_none_values(performance_history)
     num = np.array(data).shape[1]
-    link = 'https://youtu.be/WJnbutGlBHc'
+    link = 'https://youtu.be/1UXmSYEyYcs'
 
     sentence = [
         'Welcome to my dashboard. For an explanatory video, please watch the introduction video ', 
